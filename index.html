@@ -79,7 +79,7 @@
 
   <!-- フッター -->
   <footer>
-    マイク開始後、波形をタップすると停止/再開。手動ONでピンチ・ホイール・ボタンによる拡大縮小。<br>
+    マイク開始後、波形をタップすると停止/再開。ピンチ・ホイール（Shift+ホイールで振幅）・ボタンで拡大縮小。<br>
     観察対象「音源(直結)」はスピーカーを通らない理想の波形です。マイク観察では矩形波などはスピーカー・マイクの特性で形が崩れて見えます（それ自体が教材になります）。<br>
     音源A/Bを同時に鳴らすと、うなり振動数を表示します。 © SciCos / MIT License
   </footer>
@@ -98,7 +98,6 @@
         </select></label>
         <label><input id="triggerChk" type="checkbox" checked> トリガー</label>
         <label><input id="autoChk" type="checkbox"> 自動調整</label>
-        <label><input id="manualChk" type="checkbox"> 手動</label>
         <label><input id="fftChk" type="checkbox"> FFT</label>
         <div class="zoomBtns">
           <button id="timePlus">時間＋</button><button id="timeMinus">時間−</button>
@@ -128,7 +127,7 @@
       <h2>音源 ${id}</h2>
       <div class="row"><button id="play${id}">▶ 再生</button></div>
       <div class="row">
-        <label>周波数</label><input id="freq${id}" type="number" min="1" max="20000" step="1" value="${f}">
+        <label>周波数</label><input id="freq${id}" type="number" min="1" max="23000" step="1" value="${f}">
         <button id="up${id}">▲</button><button id="down${id}">▼</button><span>Hz</span>
       </div>
       <div class="row">
@@ -193,13 +192,15 @@
   /* AudioContext初期化 */
   async function ensureAudio(){
     if(!audioCtx){
-      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const AC = window.AudioContext || window.webkitAudioContext;
+      try{ audioCtx = new AC({sampleRate:96000}); }catch(e){ audioCtx = new AC(); } // 96kHz指定（測定上限引き上げ・非対応時は既定値）
       masterGain = audioCtx.createGain();
       masterGain.gain.value = getVal("masterVol",30)/100;
       masterGain.connect(audioCtx.destination);
       // 直結観察用アナライザー（スピーカー・マイクを通らない理想波形・worklet不可時のfallback）
       directAnalyser = audioCtx.createAnalyser();
       directAnalyser.fftSize = 8192;
+      directAnalyser.smoothingTimeConstant = 0.3;
       masterGain.connect(directAnalyser);
       // AudioWorkletで連続録音（長時間窓用）。失敗してもAnalyserNodeで動き続ける
       try{
@@ -227,6 +228,7 @@
       if(micSource) micSource.disconnect();
       analyser = audioCtx.createAnalyser();
       analyser.fftSize = 8192; // worklet不可時のfallback
+      analyser.smoothingTimeConstant = 0.3;
       micSource = audioCtx.createMediaStreamSource(micStream);
       micSource.connect(analyser);
       if(workletOK){
@@ -404,48 +406,119 @@
     smoothTimeMs += (targetTime-smoothTimeMs)*0.06;
   }
 
-  /* 周波数推定 */
+  /* 周波数推定（3バンド構成・10Hz〜23kHz）
+     A: 10〜120Hz   = 1/16間引き信号のACF（長周期対応・リングバッファ0.34s分）
+     B: 80〜1200Hz  = フルレートACF（声・楽器の基本周波数）
+     C: 〜23kHz     = AnalyserNodeのFFTピーク＋dB放物線補間
+     A/Bはサブハーモニック誤検出があり得るため「その周波数に実際にスペクトルenergyがあるか」
+     （スペクトル裏付け）を確認してから採用。倍音・エイリアス対策。 */
+  let specBuf=null;
+  const lowBuf=new Float32Array(32768);
+  function acfPitch(buf,sr,fmin,fmax){
+    // McLeod式: 最初のゼロ交差後、グローバル最大の90%以上に達する最初の局所ピーク
+    const minLag=Math.max(2,Math.floor(sr/fmax));
+    const maxLag=Math.min(Math.floor(sr/fmin),Math.floor(buf.length/2));
+    if(maxLag<=minLag+2) return {f:0,q:0};
+    let zero=0;
+    for(let i=0;i<buf.length/2;i++) zero+=buf[i]*buf[i];
+    if(zero<=1e-12) return {f:0,q:0};
+    const c=new Float32Array(maxLag+1);
+    for(let lag=1;lag<=maxLag;lag++){
+      let s=0;
+      for(let i=0;i<buf.length-lag;i++) s+=buf[i]*buf[i+lag];
+      c[lag]=s/zero;
+    }
+    let i0=1; while(i0<=maxLag && c[i0]>0) i0++; // 1/4周期（最初の負領域）まで読み飛ばす
+    if(i0>maxLag) return {f:0,q:0};
+    let gmax=0; for(let j=i0;j<=maxLag;j++) if(c[j]>gmax) gmax=c[j];
+    if(gmax<=0.35) return {f:0,q:gmax};
+    let pick=0;
+    for(let j=Math.max(i0,minLag);j<maxLag;j++){
+      if(c[j]>c[j-1] && c[j]>=c[j+1] && c[j]>=0.9*gmax){ pick=j; break; }
+    }
+    if(!pick){ for(let j=i0;j<=maxLag;j++) if(c[j]===gmax){ pick=j; break; } }
+    let lagF=pick; // 放物線補間で小数ラグへ（量子化誤差対策）
+    if(pick>1 && pick<maxLag){
+      const denom=c[pick-1]-2*c[pick]+c[pick+1];
+      if(Math.abs(denom)>1e-9){
+        const d=0.5*(c[pick-1]-c[pick+1])/denom;
+        if(Math.abs(d)<=1) lagF=pick+d;
+      }
+    }
+    return {f:sr/lagF, q:c[pick]};
+  }
+  function decimate16(buf){
+    const m=Math.floor(buf.length/16), out=new Float32Array(m);
+    for(let i=0;i<m;i++){ let s=0; for(let k=0;k<16;k++) s+=buf[i*16+k]; out[i]=s/16; }
+    return out;
+  }
+  function getSpectrum(){
+    const an=activeAnalyser(); if(!an) return null;
+    const N=an.frequencyBinCount;
+    if(!specBuf||specBuf.length!==N) specBuf=new Float32Array(N);
+    an.getFloatFrequencyData(specBuf);
+    let gpeak=-1e9;
+    for(let i=2;i<N-1;i++) if(isFinite(specBuf[i]) && specBuf[i]>gpeak) gpeak=specBuf[i];
+    if(gpeak<=-1e9) return null;
+    return { db:specBuf, N, gpeak, sr:audioCtx.sampleRate };
+  }
+  function specDbNear(sp,f){
+    const bin=Math.round(f/(sp.sr/2)*sp.N);
+    let m=-200;
+    for(let b=Math.max(1,bin-2);b<=Math.min(sp.N-1,bin+2);b++) m=Math.max(m,sp.db[b]);
+    return m;
+  }
+  function specPeak(sp,fmin,fmax){
+    const b0=Math.max(2,Math.ceil(fmin/(sp.sr/2)*sp.N));
+    const b1=Math.min(sp.N-2,Math.floor(fmax/(sp.sr/2)*sp.N));
+    let best=-1,bestDb=-1e9;
+    for(let b=b0;b<=b1;b++) if(sp.db[b]>bestDb){bestDb=sp.db[b];best=b;}
+    if(best<0) return {f:0,db:-1e9};
+    let bf=best; // dB放物線補間でサブビン精度
+    const c0=sp.db[best-1],c1=sp.db[best],c2=sp.db[best+1];
+    const den=c0-2*c1+c2;
+    if(isFinite(den)&&Math.abs(den)>1e-9){ const d=0.5*(c0-c2)/den; if(Math.abs(d)<=1) bf=best+d; }
+    return { f:bf*(sp.sr/2)/sp.N, db:bestDb };
+  }
+  function getLowBuf(){
+    if(workletOK){
+      const ring=obsSource==="direct"?directRing:micRing;
+      if(ring && ring.filled>=lowBuf.length){ ringLatest(ring,lowBuf.length,lowBuf); return lowBuf; }
+    }
+    return null;
+  }
   function updateFrequency(buf){
     const rms = Math.sqrt(buf.reduce((s,v)=>s+v*v,0)/buf.length);
     if(rms < 0.01){ setHz("--- Hz"); freqHistory=[]; lastHz=0; return; }
-    let f = estimateACF(buf);
-    if(!f) f = estimateFFT(buf);
+    const sr=audioCtx?.sampleRate||48000;
+    const sp=getSpectrum();
+    // スペクトル裏付け: 最強ピークから40dB以内のenergyがその周波数に実在するか
+    const sup=f=> !sp || specDbNear(sp,f) > sp.gpeak-40;
+    const lb=getLowBuf();
+    const A=lb ? acfPitch(decimate16(lb), sr/16, 10, 120) : {f:0,q:0};
+    const B=acfPitch(buf, sr, 80, 1200);
+    const C=sp ? specPeak(sp, 250, Math.min(23000, sr*0.47)) : {f:0,db:-1e9};
+    let f=0;
+    const Aok=A.f&&sup(A.f), Bok=B.f&&sup(B.f);
+    if(Aok&&Bok){
+      const n=Math.round(B.f/A.f); // AがBの整数分の1（サブハーモニック）ならBを採用
+      f=(n>=2 && Math.abs(B.f/A.f-n)<0.06*n) ? B.f : A.f;
+    } else if(Aok) f=A.f;
+    else if(Bok) f=B.f;
+    else if(sp && C.f && C.db>sp.gpeak-40) f=C.f;
     if(f){
-      freqHistory.push(f); if(freqHistory.length>5) freqHistory.shift();
+      freqHistory.push(f); if(freqHistory.length>3) freqHistory.shift();
       const med = [...freqHistory].sort((a,b)=>a-b)[Math.floor(freqHistory.length/2)];
       lastHz = med; setHz(`${med.toFixed(1)} Hz`);
     }
   }
-  function estimateACF(buf){
-    const sr=audioCtx?.sampleRate || 44100, minLag=Math.floor(sr/1200), maxLag=Math.min(Math.floor(sr/50),buf.length/2);
-    let best=0,bestLag=0,zero=0;
-    for(let i=0;i<buf.length/2;i++) zero+=buf[i]*buf[i];
-    for(let lag=minLag; lag<=maxLag; lag++){
-      let c=0;
-      for(let i=0;i<buf.length-lag;i++) c+=buf[i]*buf[i+lag];
-      c/=zero||1;
-      if(c>best){best=c;bestLag=lag;}
-    }
-    return best>0.35 ? sr/bestLag : 0;
-  }
-  function estimateFFT(buf){
-    const sr=audioCtx?.sampleRate || 44100, n=buf.length;
-    let best=0,bestHz=0;
-    for(let hz=50;hz<=1200;hz+=2){
-      const k=2*Math.PI*hz/sr; let re=0,im=0;
-      for(let i=0;i<n;i+=2){ re+=buf[i]*Math.cos(k*i); im-=buf[i]*Math.sin(k*i); }
-      const m=re*re+im*im; if(m>best){best=m;bestHz=hz;}
-    }
-    return bestHz;
-  }
-
   /* 音源制御 */
   async function toggleOsc(id){
     await ensureAudio();
     const o=oscs[id], now=audioCtx.currentTime;
     if(o.on){ stopOsc(id); return; }
     o.osc=audioCtx.createOscillator(); o.gain=audioCtx.createGain();
-    o.freq=clamp(+getEl("freq"+id).value||440,1,20000); o.wave=getEl("wave"+id).value; o.vol=+getEl("vol"+id).value;
+    o.freq=clamp(+getEl("freq"+id).value||440,1,23000); o.wave=getEl("wave"+id).value; o.vol=+getEl("vol"+id).value;
     o.osc.frequency.value=o.freq; o.osc.type=o.wave;
     o.gain.gain.setValueAtTime(0,now);
     o.gain.gain.linearRampToValueAtTime((o.vol/100),now+0.02);
@@ -464,7 +537,7 @@
   }
   function updateOsc(id,normalize){
     const o=oscs[id];
-    o.freq=clamp(+getEl("freq"+id).value||440,1,20000);
+    o.freq=clamp(+getEl("freq"+id).value||440,1,23000);
     if(normalize) getEl("freq"+id).value=o.freq; // 入力確定時のみ書き戻す（タイピング中は邪魔しない）
     o.wave=getEl("wave"+id).value; o.vol=+getEl("vol"+id).value;
     if(o.osc){ o.osc.frequency.setTargetAtTime(o.freq,audioCtx.currentTime,0.01); o.osc.type=o.wave; }
@@ -501,19 +574,18 @@
     byId(prefix+"ampMinus").onclick=()=>zoom("amp",1.25);
     byId(prefix+"scopeCanvas").onclick=()=>{ frozen=!frozen; if(!frozen) showStatus(""); };
     byId(prefix+"scopeCanvas").onwheel=e=>{
-      if(!byId(prefix+"manualChk").checked) return;
       e.preventDefault(); zoom(e.shiftKey?"amp":"time", e.deltaY<0?0.85:1.15);
     };
     addPinch(byId(prefix+"scopeCanvas"),prefix);
   }
   function stepFreq(id,d,prefix){
-    const el=byId(prefix+"freq"+id); el.value=clamp((+el.value||0)+d,1,20000);
+    const el=byId(prefix+"freq"+id); el.value=clamp((+el.value||0)+d,1,23000);
     mirror(prefix,"freq"+id,el.value); updateOsc(id,true);
   }
   function addPinch(c,prefix){
     let last=null;
     c.addEventListener("touchmove",e=>{
-      if(!byId(prefix+"manualChk").checked || e.touches.length!==2) return;
+      if(e.touches.length!==2) return;
       e.preventDefault();
       const a=e.touches[0], b=e.touches[1], dx=Math.abs(a.clientX-b.clientX), dy=Math.abs(a.clientY-b.clientY);
       if(last){
@@ -525,6 +597,7 @@
     c.addEventListener("touchend",()=>last=null);
   }
   function zoom(kind,f){
+    scopeIds.forEach(p=>{ const e=byId(p+"autoChk"); if(e) e.checked=false; }); // 手動操作時は自動調整を解除
     if(kind==="time"){ timeMs=clamp(timeMs*f,1,maxTimeMs()); smoothTimeMs=timeMs; }
     else { ampRange=clamp(ampRange*f,0.05,1); smoothAmp=ampRange; }
     drawOnce();
