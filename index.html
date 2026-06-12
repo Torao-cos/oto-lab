@@ -80,6 +80,7 @@
   <!-- フッター -->
   <footer>
     マイク開始後、波形をタップすると停止/再開。手動ONでピンチ・ホイール・ボタンによる拡大縮小。<br>
+    観察対象「音源(直結)」はスピーカーを通らない理想の波形です。マイク観察では矩形波などはスピーカー・マイクの特性で形が崩れて見えます（それ自体が教材になります）。<br>
     音源A/Bを同時に鳴らすと、うなり振動数を表示します。 © SciCos / MIT License
   </footer>
 
@@ -92,6 +93,9 @@
     <div class="scopePanel">
       <div class="bar">
         <button id="micBtn">🎤 マイク開始</button>
+        <label>観察対象 <select id="obsSel">
+          <option value="mic">マイク</option><option value="direct">音源(直結)</option>
+        </select></label>
         <label><input id="triggerChk" type="checkbox" checked> トリガー</label>
         <label><input id="autoChk" type="checkbox"> 自動調整</label>
         <label><input id="manualChk" type="checkbox"> 手動</label>
@@ -143,6 +147,7 @@
 
   /* 共通状態 */
   let audioCtx, analyser, micStream, micSource;
+  let directAnalyser = null, obsSource = "mic"; // 観察対象: mic=マイク / direct=音源直結（理想波形）
   let data = new Float32Array(8192), frozenData = null, raf = 0;
   let timeMs = 10, ampRange = 1, smoothTimeMs = 10, smoothAmp = 1;
   let frozen = false, lastFreqAt = 0, freqHistory = [], lastHz = 0;
@@ -174,6 +179,10 @@
       masterGain = audioCtx.createGain();
       masterGain.gain.value = getVal("masterVol",30)/100;
       masterGain.connect(audioCtx.destination);
+      // 直結観察用アナライザー（スピーカー・マイクを通らない理想波形）
+      directAnalyser = audioCtx.createAnalyser();
+      directAnalyser.fftSize = 8192;
+      masterGain.connect(directAnalyser);
     }
     if(audioCtx.state !== "running") await audioCtx.resume();
   }
@@ -216,12 +225,16 @@
   function startDraw(){
     if(!raf) raf = requestAnimationFrame(loop);
   }
+  function activeAnalyser(){
+    return obsSource==="direct" ? directAnalyser : analyser;
+  }
   function loop(t){
-    if(analyser && !frozen){
-      analyser.getFloatTimeDomainData(data);
+    const an = activeAnalyser();
+    if(an && !frozen){
+      an.getFloatTimeDomainData(data);
       frozenData = new Float32Array(data);
     }
-    if(t-lastFreqAt>500 && analyser && !frozen){
+    if(t-lastFreqAt>500 && an && !frozen){
       lastFreqAt=t; updateFrequency(data);
     }
     drawOnce();
@@ -252,7 +265,7 @@
       if(byId(p+"autoChk")?.checked) autoScale(buf);
       drawWave(ctx,w,waveH,buf,p);
       if(useFFT) drawFFT(ctx,w,h-waveH,waveH,buf);
-      if(!analyser) centerMessage(ctx,w,h,"マイク開始、または音源を再生してください");
+      if(!activeAnalyser()) centerMessage(ctx,w,h, obsSource==="direct" ? "音源を再生してください" : "マイク開始、または観察対象を「音源(直結)」にしてください");
       setText(p+"scaleText",`${(smoothTimeMs/10).toFixed(2)} ms/div　縦 ±${smoothAmp.toFixed(2)}`);
       byId(p+"statusText").hidden = !frozen && !byId(p+"statusText").textContent;
       if(frozen) showOneStatus(p,"⏸ 停止中（タップで再開）");
@@ -386,15 +399,17 @@
   function stopOsc(id){
     const o=oscs[id]; if(!o.on) return;
     const now=audioCtx.currentTime;
-    o.gain.gain.cancelScheduledValues(now);
-    o.gain.gain.setValueAtTime(o.gain.gain.value,now);
-    o.gain.gain.linearRampToValueAtTime(0,now+0.02);
-    setTimeout(()=>{try{o.osc.stop();o.osc.disconnect();o.gain.disconnect();}catch(e){}},30);
+    const osc=o.osc, gain=o.gain; // 30ms以内の再再生でも古いoscを確実に止める（参照を固定）
+    gain.gain.cancelScheduledValues(now);
+    gain.gain.setValueAtTime(gain.gain.value,now);
+    gain.gain.linearRampToValueAtTime(0,now+0.02);
+    setTimeout(()=>{try{osc.stop();osc.disconnect();gain.disconnect();}catch(e){}},30);
     o.on=false; syncOscUI(id); updateBeat();
   }
-  function updateOsc(id){
+  function updateOsc(id,normalize){
     const o=oscs[id];
-    o.freq=clamp(+getEl("freq"+id).value||440,1,20000); getEl("freq"+id).value=o.freq;
+    o.freq=clamp(+getEl("freq"+id).value||440,1,20000);
+    if(normalize) getEl("freq"+id).value=o.freq; // 入力確定時のみ書き戻す（タイピング中は邪魔しない）
     o.wave=getEl("wave"+id).value; o.vol=+getEl("vol"+id).value;
     if(o.osc){ o.osc.frequency.setTargetAtTime(o.freq,audioCtx.currentTime,0.01); o.osc.type=o.wave; }
     if(o.gain) o.gain.gain.setTargetAtTime(o.vol/100,audioCtx.currentTime,0.01);
@@ -411,9 +426,16 @@
     byId(prefix+"micBtn").onclick=startMic;
     byId(prefix+"stopAll").onclick=allStop;
     byId(prefix+"masterVol").oninput=e=>{ if(masterGain) masterGain.gain.value=e.target.value/100; mirror(prefix,"masterVol",e.target.value); };
+    // 観察対象の切替（mic/direct）。両ビューで同期
+    { const h=e=>{ obsSource=e.target.value; mirror(prefix,"obsSel",e.target.value); };
+      byId(prefix+"obsSel").oninput=h; byId(prefix+"obsSel").onchange=h; }
     ["A","B"].forEach(id=>{
       byId(prefix+"play"+id).onclick=()=>toggleOsc(id);
-      ["freq","wave","vol"].forEach(k=>byId(prefix+k+id).oninput=e=>{ mirror(prefix,k+id,e.target.value); updateOsc(id); });
+      // input/change両方に同じハンドラ（古いiOS Safariはselectでinputを発火しない）
+      ["freq","wave","vol"].forEach(k=>{
+        const h=e=>{ mirror(prefix,k+id,e.target.value); updateOsc(id, e.type==="change"); };
+        byId(prefix+k+id).oninput=h; byId(prefix+k+id).onchange=h;
+      });
       byId(prefix+"up"+id).onclick=()=>stepFreq(id,1,prefix);
       byId(prefix+"down"+id).onclick=()=>stepFreq(id,-1,prefix);
     });
@@ -430,7 +452,7 @@
   }
   function stepFreq(id,d,prefix){
     const el=byId(prefix+"freq"+id); el.value=clamp((+el.value||0)+d,1,20000);
-    mirror(prefix,"freq"+id,el.value); updateOsc(id);
+    mirror(prefix,"freq"+id,el.value); updateOsc(id,true);
   }
   function addPinch(c,prefix){
     let last=null;
