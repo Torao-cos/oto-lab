@@ -1,0 +1,4 @@
+ORDER*.md
+codex-*.log
+codex-*.log.err
+test-results/
