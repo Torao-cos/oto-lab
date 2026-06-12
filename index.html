@@ -149,6 +149,24 @@
   let audioCtx, analyser, micStream, micSource;
   let directAnalyser = null, obsSource = "mic"; // 観察対象: mic=マイク / direct=音源直結（理想波形）
   let data = new Float32Array(8192), frozenData = null, raf = 0;
+
+  /* AudioWorkletリングバッファ（長時間窓・最大1000ms表示用。AnalyserNodeは約170msが上限） */
+  const RING_N = 131072; // 96kHzでも1000ms+トリガー探索域が収まる
+  let workletOK = false, micRing = null, directRing = null, micTap = null, workletSink = null;
+  function makeRing(){ return { buf:new Float32Array(RING_N), w:0, filled:0 }; }
+  function ringPush(r,chunk){
+    for(let i=0;i<chunk.length;i++){ r.buf[r.w]=chunk[i]; r.w=(r.w+1)%RING_N; }
+    r.filled=Math.min(RING_N, r.filled+chunk.length);
+  }
+  function ringLatest(r,n,out){ // 最新nサンプルをoutへ（時系列順）
+    let idx=(r.w-n+RING_N*2)%RING_N;
+    for(let i=0;i<n;i++){ out[i]=r.buf[idx]; idx=(idx+1)%RING_N; }
+  }
+  function maxTimeMs(){
+    if(!workletOK) return 100;
+    const sr=audioCtx?.sampleRate||48000;
+    return Math.min(1000, Math.floor((RING_N-8192)/sr*1000));
+  }
   let timeMs = 10, ampRange = 1, smoothTimeMs = 10, smoothAmp = 1;
   let frozen = false, lastFreqAt = 0, freqHistory = [], lastHz = 0;
   const scopeIds = ["", "b_"];
@@ -179,10 +197,21 @@
       masterGain = audioCtx.createGain();
       masterGain.gain.value = getVal("masterVol",30)/100;
       masterGain.connect(audioCtx.destination);
-      // 直結観察用アナライザー（スピーカー・マイクを通らない理想波形）
+      // 直結観察用アナライザー（スピーカー・マイクを通らない理想波形・worklet不可時のfallback）
       directAnalyser = audioCtx.createAnalyser();
       directAnalyser.fftSize = 8192;
       masterGain.connect(directAnalyser);
+      // AudioWorkletで連続録音（長時間窓用）。失敗してもAnalyserNodeで動き続ける
+      try{
+        const src = "class Cap extends AudioWorkletProcessor{process(inputs){const c=inputs[0][0];if(c)this.port.postMessage(c.slice(0));return true}}registerProcessor('cap',Cap);";
+        await audioCtx.audioWorklet.addModule(URL.createObjectURL(new Blob([src],{type:"application/javascript"})));
+        workletSink = audioCtx.createGain(); workletSink.gain.value=0; workletSink.connect(audioCtx.destination);
+        const directTap = new AudioWorkletNode(audioCtx,"cap");
+        masterGain.connect(directTap); directTap.connect(workletSink);
+        directRing = makeRing();
+        directTap.port.onmessage = e=>ringPush(directRing,e.data);
+        workletOK = true;
+      }catch(e){ workletOK = false; }
     }
     if(audioCtx.state !== "running") await audioCtx.resume();
   }
@@ -197,9 +226,16 @@
       });
       if(micSource) micSource.disconnect();
       analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 8192; // 約170ms分のバッファ（100ms表示に対応）
+      analyser.fftSize = 8192; // worklet不可時のfallback
       micSource = audioCtx.createMediaStreamSource(micStream);
       micSource.connect(analyser);
+      if(workletOK){
+        if(micTap){ try{micTap.disconnect();}catch(e){} }
+        micTap = new AudioWorkletNode(audioCtx,"cap");
+        micSource.connect(micTap); micTap.connect(workletSink);
+        micRing = makeRing();
+        micTap.port.onmessage = e=>ringPush(micRing,e.data);
+      }
       showStatus("");
       scopeIds.forEach(p=>setText(p+"micBtn","🎤 マイク動作中"));
       startDraw();
@@ -228,14 +264,34 @@
   function activeAnalyser(){
     return obsSource==="direct" ? directAnalyser : analyser;
   }
+  function sourceReady(){
+    if(workletOK) return obsSource==="direct" ? !!directRing : !!micRing;
+    return !!activeAnalyser();
+  }
+  function tail8k(buf){ return buf.length>8192 ? buf.subarray(buf.length-8192) : buf; }
   function loop(t){
-    const an = activeAnalyser();
-    if(an && !frozen){
-      an.getFloatTimeDomainData(data);
-      frozenData = new Float32Array(data);
+    let got=false;
+    if(workletOK){
+      const ring = obsSource==="direct" ? directRing : micRing;
+      if(ring && ring.filled>=8192 && !frozen){
+        const sr=audioCtx.sampleRate;
+        const need=Math.min(ring.filled, Math.max(8192, Math.ceil(sr*smoothTimeMs/1000))+8192);
+        if(data.length!==need) data=new Float32Array(need);
+        ringLatest(ring,need,data);
+        frozenData=new Float32Array(data);
+        got=true;
+      }
+    } else {
+      const an = activeAnalyser();
+      if(an && !frozen){
+        if(data.length!==8192) data=new Float32Array(8192);
+        an.getFloatTimeDomainData(data);
+        frozenData = new Float32Array(data);
+        got=true;
+      }
     }
-    if(t-lastFreqAt>500 && an && !frozen){
-      lastFreqAt=t; updateFrequency(data);
+    if(t-lastFreqAt>500 && got){
+      lastFreqAt=t; updateFrequency(tail8k(data));
     }
     drawOnce();
     raf = requestAnimationFrame(loop);
@@ -264,8 +320,8 @@
       const buf = frozenData || data;
       if(byId(p+"autoChk")?.checked) autoScale(buf);
       drawWave(ctx,w,waveH,buf,p);
-      if(useFFT) drawFFT(ctx,w,h-waveH,waveH,buf);
-      if(!activeAnalyser()) centerMessage(ctx,w,h, obsSource==="direct" ? "音源を再生してください" : "マイク開始、または観察対象を「音源(直結)」にしてください");
+      if(useFFT) drawFFT(ctx,w,h-waveH,waveH,tail8k(buf));
+      if(!sourceReady()) centerMessage(ctx,w,h, obsSource==="direct" ? "音源を再生してください" : "マイク開始、または観察対象を「音源(直結)」にしてください");
       setText(p+"scaleText",`${(smoothTimeMs/10).toFixed(2)} ms/div　縦 ±${smoothAmp.toFixed(2)}`);
       byId(p+"statusText").hidden = !frozen && !byId(p+"statusText").textContent;
       if(frozen) showOneStatus(p,"⏸ 停止中（タップで再開）");
@@ -299,11 +355,11 @@
     }
     ctx.strokeStyle="#2c8b55"; ctx.beginPath(); ctx.moveTo(0,h/2); ctx.lineTo(w,h/2); ctx.stroke();
   }
-  /* DFTは重いので150msごと（凍結中はバッファ変化時のみ）再計算してキャッシュ */
+  /* DFTは重いので150msごとに再計算してキャッシュ */
   const fftCache={t:0,buf:null,mags:null,peak:0,peakHz:0};
   function computeFFT(buf){
     const now=performance.now();
-    if(fftCache.mags && fftCache.buf===buf && (frozen || now-fftCache.t<150)) return fftCache;
+    if(fftCache.mags && now-fftCache.t<150) return fftCache;
     const sr = audioCtx?.sampleRate || 44100, n=buf.length, maxHz=5000;
     const bins=260, mags=new Array(bins).fill(0);
     let peak=0, peakHz=0;
@@ -343,7 +399,7 @@
     for(const v of buf) max=Math.max(max,Math.abs(v));
     const targetAmp = clamp(max*1.4,0.05,1);
     const hz = lastHz || 440; // 無音時に毎フレームACFを回さない（性能対策）
-    const targetTime = clamp(1000/hz*4,1,100);
+    const targetTime = clamp(1000/hz*4,1,maxTimeMs());
     smoothAmp += (targetAmp-smoothAmp)*0.06;
     smoothTimeMs += (targetTime-smoothTimeMs)*0.06;
   }
@@ -469,7 +525,7 @@
     c.addEventListener("touchend",()=>last=null);
   }
   function zoom(kind,f){
-    if(kind==="time"){ timeMs=clamp(timeMs*f,1,100); smoothTimeMs=timeMs; }
+    if(kind==="time"){ timeMs=clamp(timeMs*f,1,maxTimeMs()); smoothTimeMs=timeMs; }
     else { ampRange=clamp(ampRange*f,0.05,1); smoothAmp=ampRange; }
     drawOnce();
   }
