@@ -69,7 +69,7 @@ function check(name, ok, detail = '') {
   await page.click('#b_micBtn');
   await page.waitForTimeout(2000);
   const micBtnText = await page.textContent('#b_micBtn');
-  check('マイク開始成功（ボタン表示変化）', micBtnText.includes('動作中'), micBtnText);
+  check('マイク開始成功（ボタンが停止表示に）', micBtnText.includes('マイク停止'), micBtnText);
   const hz = await page.textContent('#b_hzText');
   check('周波数表示が描画されている', /Hz/.test(hz), hz);
   await shot(page, '03-both-mic.png');

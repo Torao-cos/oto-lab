@@ -147,11 +147,12 @@
   /* 共通状態 */
   let audioCtx, analyser, micStream, micSource;
   let directAnalyser = null, obsSource = "mic"; // 観察対象: mic=マイク / direct=音源直結（理想波形）
+  let oscFmax = 23000; // 音源周波数の実効上限（ctx生成後にNyquist×0.45へ更新）
   let data = new Float32Array(8192), frozenData = null, raf = 0;
 
   /* AudioWorkletリングバッファ（長時間窓・最大1000ms表示用。AnalyserNodeは約170msが上限） */
   const RING_N = 131072; // 96kHzでも1000ms+トリガー探索域が収まる
-  let workletOK = false, micRing = null, directRing = null, micTap = null, workletSink = null;
+  let workletOK = false, micRing = null, directRing = null, micTap = null, directTap = null, workletSink = null;
   function makeRing(){ return { buf:new Float32Array(RING_N), w:0, filled:0 }; }
   function ringPush(r,chunk){
     for(let i=0;i<chunk.length;i++){ r.buf[r.w]=chunk[i]; r.w=(r.w+1)%RING_N; }
@@ -162,7 +163,7 @@
     for(let i=0;i<n;i++){ out[i]=r.buf[idx]; idx=(idx+1)%RING_N; }
   }
   function maxTimeMs(){
-    if(!workletOK) return 100;
+    if(!workletOK) return Math.max(20, Math.floor(8192/(audioCtx?.sampleRate||48000)*1000*0.9));
     const sr=audioCtx?.sampleRate||48000;
     return Math.min(1000, Math.floor((RING_N-8192)/sr*1000));
   }
@@ -194,6 +195,8 @@
     if(!audioCtx){
       const AC = window.AudioContext || window.webkitAudioContext;
       try{ audioCtx = new AC({sampleRate:96000}); }catch(e){ audioCtx = new AC(); } // 96kHz指定（測定上限引き上げ・非対応時は既定値）
+      oscFmax = Math.min(23000, Math.floor(audioCtx.sampleRate*0.45));
+      ["freqA","freqB"].forEach(id=>{ [byId(id),byId("b_"+id)].forEach(el=>{ if(el) el.max=oscFmax; }); });
       masterGain = audioCtx.createGain();
       masterGain.gain.value = getVal("masterVol",30)/100;
       masterGain.connect(audioCtx.destination);
@@ -204,21 +207,33 @@
       masterGain.connect(directAnalyser);
       // AudioWorkletで連続録音（長時間窓用）。失敗してもAnalyserNodeで動き続ける
       try{
-        const src = "class Cap extends AudioWorkletProcessor{process(inputs){const c=inputs[0][0];if(c)this.port.postMessage(c.slice(0));return true}}registerProcessor('cap',Cap);";
-        await audioCtx.audioWorklet.addModule(URL.createObjectURL(new Blob([src],{type:"application/javascript"})));
+        const src = "class Cap extends AudioWorkletProcessor{constructor(){super();this.dead=false;this.port.onmessage=()=>{this.dead=true};}process(inputs){if(this.dead)return false;const c=inputs[0][0];if(c)this.port.postMessage(c.slice(0));return true}}registerProcessor('cap',Cap);";
+        const wurl=URL.createObjectURL(new Blob([src],{type:"application/javascript"}));
+        await audioCtx.audioWorklet.addModule(wurl);
+        URL.revokeObjectURL(wurl);
         workletSink = audioCtx.createGain(); workletSink.gain.value=0; workletSink.connect(audioCtx.destination);
-        const directTap = new AudioWorkletNode(audioCtx,"cap");
+        directTap = new AudioWorkletNode(audioCtx,"cap");
         masterGain.connect(directTap); directTap.connect(workletSink);
         directRing = makeRing();
         directTap.port.onmessage = e=>ringPush(directRing,e.data);
         workletOK = true;
-      }catch(e){ workletOK = false; }
+      }catch(e){ workletOK = false; showStatus("この端末では時間軸の表示が約100msまでに制限されます"); setTimeout(()=>showStatus(""),6000); }
     }
     if(audioCtx.state !== "running") await audioCtx.resume();
   }
 
-  /* マイク開始 */
+  /* マイク開始/停止（トグル） */
+  let micOn=false;
+  function stopMic(){
+    try{ if(micStream) micStream.getTracks().forEach(tr=>tr.stop()); }catch(e){}
+    try{ if(micSource) micSource.disconnect(); }catch(e){}
+    try{ if(micTap){ micTap.port.postMessage(0); micTap.port.onmessage=null; micTap.disconnect(); } }catch(e){}
+    analyser=null; micRing=null; micTap=null; micStream=null; micSource=null; micOn=false;
+    setHz("--- Hz"); freqHistory=[]; lastHz=0;
+    scopeIds.forEach(p=>setText(p+"micBtn","🎤 マイク開始"));
+  }
   async function startMic(){
+    if(micOn){ stopMic(); return; }
     try{
       await ensureAudio();
       if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error("未対応");
@@ -236,10 +251,10 @@
         micTap = new AudioWorkletNode(audioCtx,"cap");
         micSource.connect(micTap); micTap.connect(workletSink);
         micRing = makeRing();
-        micTap.port.onmessage = e=>ringPush(micRing,e.data);
+        micTap.port.onmessage = e=>{ if(micRing) ringPush(micRing,e.data); };
       }
       showStatus("");
-      scopeIds.forEach(p=>setText(p+"micBtn","🎤 マイク動作中"));
+      micOn=true; scopeIds.forEach(p=>setText(p+"micBtn","⏹ マイク停止"));
       startDraw();
     }catch(e){
       showStatus("マイクの使用を許可してください。未対応または権限が拒否されました。");
@@ -322,7 +337,7 @@
       const buf = frozenData || data;
       if(byId(p+"autoChk")?.checked) autoScale(buf);
       drawWave(ctx,w,waveH,buf,p);
-      if(useFFT) drawFFT(ctx,w,h-waveH,waveH,tail8k(buf));
+      if(useFFT) drawFFT(ctx,w,h-waveH,waveH);
       if(!sourceReady()) centerMessage(ctx,w,h, obsSource==="direct" ? "音源を再生してください" : "マイク開始、または観察対象を「音源(直結)」にしてください");
       setText(p+"scaleText",`${(smoothTimeMs/10).toFixed(2)} ms/div　縦 ±${smoothAmp.toFixed(2)}`);
       byId(p+"statusText").hidden = !frozen && !byId(p+"statusText").textContent;
@@ -357,38 +372,44 @@
     }
     ctx.strokeStyle="#2c8b55"; ctx.beginPath(); ctx.moveTo(0,h/2); ctx.lineTo(w,h/2); ctx.stroke();
   }
-  /* DFTは重いので150msごとに再計算してキャッシュ */
-  const fftCache={t:0,buf:null,mags:null,peak:0,peakHz:0};
-  function computeFFT(buf){
-    const now=performance.now();
-    if(fftCache.mags && now-fftCache.t<150) return fftCache;
-    const sr = audioCtx?.sampleRate || 44100, n=buf.length, maxHz=5000;
-    const bins=260, mags=new Array(bins).fill(0);
-    let peak=0, peakHz=0;
-    for(let b=1;b<bins;b++){
-      const hz=b*maxHz/bins, k=2*Math.PI*hz/sr;
-      let re=0, im=0;
-      for(let i=0;i<n;i+=2){ re+=buf[i]*Math.cos(k*i); im-=buf[i]*Math.sin(k*i); }
-      const m=Math.sqrt(re*re+im*im)/n; mags[b]=m;
-      if(m>peak){peak=m; peakHz=hz;}
-    }
-    Object.assign(fftCache,{t:now,buf,mags,peak,peakHz});
-    return fftCache;
-  }
-  function drawFFT(ctx,w,h,top,buf){
+  /* FFT表示はAnalyserNode内蔵FFTを使用（自前DFT廃止＝低スペック端末対応）。
+     dB→リニア変換して表示（倍音の振幅比が直感的に見える）。凍結中は凍結時のスペクトルを保持 */
+  let fftFrozenCache=null, fftLin=null, fftLive=null;
+  function drawFFT(ctx,w,h,top){
     ctx.fillStyle="#030906"; ctx.fillRect(0,top,w,h);
-    const maxHz=5000;
-    const {mags,peak,peakHz}=computeFFT(buf);
-    const bins=mags.length;
+    const an=activeAnalyser();
+    if(!an||!audioCtx) return;
+    const sr=audioCtx.sampleRate, maxHz=5000;
+    let db;
+    if(frozen){
+      if(!fftFrozenCache){ fftFrozenCache=new Float32Array(an.frequencyBinCount); an.getFloatFrequencyData(fftFrozenCache); }
+      db=fftFrozenCache;
+    }else{
+      fftFrozenCache=null;
+      const N=an.frequencyBinCount;
+      if(!fftLive||fftLive.length!==N) fftLive=new Float32Array(N);
+      an.getFloatFrequencyData(fftLive);
+      db=fftLive;
+    }
+    const binHz=(sr/2)/db.length, bins=Math.max(8,Math.min(db.length,Math.floor(maxHz/binHz)));
+    if(!fftLin||fftLin.length!==bins) fftLin=new Float32Array(bins);
+    let peak=0, peakI=0;
+    for(let b=0;b<bins;b++){
+      const v=isFinite(db[b])?Math.pow(10,db[b]/20):0;
+      fftLin[b]=v; if(v>peak){peak=v;peakI=b;}
+    }
     ctx.strokeStyle="#69b7ff"; ctx.beginPath();
     for(let b=0;b<bins;b++){
-      const x=b*w/bins, y=top+h-Math.min(h*0.92,(mags[b]/Math.max(peak,0.0001))*h*0.86);
+      const x=b*w/bins, y=top+h-Math.min(h*0.92,(fftLin[b]/Math.max(peak,1e-9))*h*0.86);
       b?ctx.lineTo(x,y):ctx.moveTo(x,y);
     }
     ctx.stroke();
     ctx.fillStyle="#9ac5ad"; ctx.font=`${Math.max(12,Math.floor(h/10))}px system-ui`;
     ctx.fillText("FFT 0〜5000Hz",8,top+18);
-    if(peakHz>0) ctx.fillText(`${Math.round(peakHz)} Hz`,Math.min(w-90,peakHz/maxHz*w+6),top+36);
+    if(peak>1e-7){
+      const peakHz=Math.round(peakI*binHz);
+      ctx.fillText(`${peakHz} Hz`,Math.min(w-90,peakHz/maxHz*w+6),top+36);
+    }
   }
   function centerMessage(ctx,w,h,msg){
     ctx.fillStyle="#ffd166"; ctx.font=`${Math.max(16,Math.floor(w/34))}px system-ui`;
@@ -414,6 +435,7 @@
      （スペクトル裏付け）を確認してから採用。倍音・エイリアス対策。 */
   let specBuf=null;
   const lowBuf=new Float32Array(32768);
+  const acfScratch=new Float32Array(8192); // ACF作業バッファ（毎回確保しない・GCカクつき対策）
   function acfPitch(buf,sr,fmin,fmax){
     // McLeod式: 最初のゼロ交差後、グローバル最大の90%以上に達する最初の局所ピーク
     const minLag=Math.max(2,Math.floor(sr/fmax));
@@ -422,7 +444,7 @@
     let zero=0;
     for(let i=0;i<buf.length/2;i++) zero+=buf[i]*buf[i];
     if(zero<=1e-12) return {f:0,q:0};
-    const c=new Float32Array(maxLag+1);
+    const c=acfScratch;
     for(let lag=1;lag<=maxLag;lag++){
       let s=0;
       for(let i=0;i<buf.length-lag;i++) s+=buf[i]*buf[i+lag];
@@ -518,7 +540,7 @@
     const o=oscs[id], now=audioCtx.currentTime;
     if(o.on){ stopOsc(id); return; }
     o.osc=audioCtx.createOscillator(); o.gain=audioCtx.createGain();
-    o.freq=clamp(+getEl("freq"+id).value||440,1,23000); o.wave=getEl("wave"+id).value; o.vol=+getEl("vol"+id).value;
+    o.freq=clamp(+getEl("freq"+id).value||440,1,oscFmax); o.wave=getEl("wave"+id).value; o.vol=+getEl("vol"+id).value;
     o.osc.frequency.value=o.freq; o.osc.type=o.wave;
     o.gain.gain.setValueAtTime(0,now);
     o.gain.gain.linearRampToValueAtTime((o.vol/100),now+0.02);
@@ -537,7 +559,7 @@
   }
   function updateOsc(id,normalize){
     const o=oscs[id];
-    o.freq=clamp(+getEl("freq"+id).value||440,1,23000);
+    o.freq=clamp(+getEl("freq"+id).value||440,1,oscFmax);
     if(normalize) getEl("freq"+id).value=o.freq; // 入力確定時のみ書き戻す（タイピング中は邪魔しない）
     o.wave=getEl("wave"+id).value; o.vol=+getEl("vol"+id).value;
     if(o.osc){ o.osc.frequency.setTargetAtTime(o.freq,audioCtx.currentTime,0.01); o.osc.type=o.wave; }
@@ -579,7 +601,7 @@
     addPinch(byId(prefix+"scopeCanvas"),prefix);
   }
   function stepFreq(id,d,prefix){
-    const el=byId(prefix+"freq"+id); el.value=clamp((+el.value||0)+d,1,23000);
+    const el=byId(prefix+"freq"+id); el.value=clamp((+el.value||0)+d,1,oscFmax);
     mirror(prefix,"freq"+id,el.value); updateOsc(id,true);
   }
   function addPinch(c,prefix){
