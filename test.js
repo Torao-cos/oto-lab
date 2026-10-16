@@ -44,7 +44,7 @@ function check(name, ok, detail = '') {
   await page.goto(`http://127.0.0.1:${PORT}/`);
   await page.waitForTimeout(800);
   check('初期表示でJSエラーなし', errors.length === 0, errors.join(' | '));
-  check('タブ3つ表示', await page.locator('.tabs button').count() === 3);
+  check('タブ3つ表示', await page.locator('.tabs button:not(.modeBtn)').count() === 3);
   await shot(page, '01-scope-initial.png');
 
   // 2. 音源タブ: A再生 → B再生 → うなり表示
@@ -102,7 +102,28 @@ function check(name, ok, detail = '') {
   const fA = await page.inputValue('#b_freqA');
   check('▲ステッパーで441', fA === '441', fA);
 
-  // 9. 最終エラー確認
+  // 9. 投影モード（なみラボと同じ: ?mode=proj 優先・前回の選択を記憶）
+  const bgAt = () => page.evaluate(() => {
+    const c = document.getElementById('b_scopeCanvas');
+    return Array.from(c.getContext('2d').getImageData(Math.floor(c.width * 0.95), Math.floor(c.height * 0.06), 1, 1).data.slice(0, 3));
+  });
+  check('既定は手元モード', await page.evaluate(() => document.documentElement.dataset.mode) === 'dark');
+  await page.click('#modeBtn');
+  await page.waitForTimeout(300);
+  check('ボタンで投影モードへ', await page.evaluate(() => document.documentElement.dataset.mode) === 'proj');
+  check('投影モードでURLに mode=proj', page.url().includes('mode=proj'), page.url());
+  check('切替でマイクが止まらない', (await page.textContent('#b_micBtn')).includes('停止'));
+  const projBg = await bgAt();
+  check('投影モードの波形面は白地', projBg.every((v) => v > 240), JSON.stringify(projBg));
+  await page.goto(`http://127.0.0.1:${PORT}/`);
+  await page.waitForTimeout(500);
+  check('再読み込み後も投影モードを記憶', await page.evaluate(() => document.documentElement.dataset.mode) === 'proj');
+  check('投影中のボタン表記', (await page.textContent('#modeBtn')).startsWith('手元モードへ'));
+  await page.goto(`http://127.0.0.1:${PORT}/?mode=dark`);
+  await page.waitForTimeout(500);
+  check('?mode=dark が最優先', await page.evaluate(() => document.documentElement.dataset.mode) === 'dark');
+
+  // 10. 最終エラー確認
   check('全操作後もJSエラーなし', errors.length === 0, errors.join(' | '));
 
   await browser.close();
