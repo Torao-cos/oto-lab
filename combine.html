@@ -1,0 +1,352 @@
+<!doctype html><html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>2つの正弦波の合成 - おとラボ</title>
+<link rel="stylesheet" href="../nami-lab/common.css">
+<style>
+  /* combine.html ローカル補正（common.css は編集しない） */
+  .panel.cmb{min-height:280px}
+  .controls .note.reason{color:var(--text);opacity:.92;line-height:1.55;font-size:.88rem}
+  .controls .readout.big{font-size:1.12rem}
+  .controls .ctlLabel.hdr{font-weight:900}
+  .controls .wv1{color:var(--blue);font-weight:900}
+  .controls .wv2{color:var(--red);font-weight:900}
+  html[data-mode=proj] .controls .note.reason{opacity:1;font-size:.95rem}
+  html[data-mode=proj] .panel.cmb{min-height:320px}
+  @media (max-width:760px){
+    .panel.cmb{min-height:270px}
+    .controls .readout.big{font-size:1rem}
+  }
+</style>
+</head><body>
+<script src="../nami-lab/common.js"></script>
+<script>
+(() => {
+'use strict';
+const { C, TAU, ui, fmt, clamp, PROJ, SC, mathHTML } = Nami;
+const S = v => v * SC;
+const mfmt = (v, d = 2) => fmt(v, d).replace('-', '−');           // 表示用のマイナス記号
+const mod = (a, b) => a - Math.floor(a / b) * b;
+const COL = () => [C.wave1, C.wave2];
+
+/* ===================== 状態 ===================== */
+// 位置 x モード: y_i(x,t) = A_i sin 2π(x − Δx_i − vt)/λ_i
+// 時刻 t モード: y_i(t)   = A_i sin 2π f_i (t − Δt_i)
+const St = {
+  axis: 'x',
+  A: [0.6, 0.4],
+  lam: [2.0, 3.0], f: [1.0, 1.5],
+  sx: [0, 0], st: [0, 0],
+  Wx: 8, Wt: 4, v: 1.0,
+  xg: 3.2,
+  ghost: false, env: false
+};
+const A_MAX = 1.0;
+
+function buildCombine(ctx) {
+  ctx.layout('1');
+  const sim = ctx.sim;
+  const cvU = ctx.canvas({ title: '上段：y₁（青）と y₂（赤）　曲線をつかむ＝ずらす／山の点＝振幅とずらし', className: 'cmb' });
+  const cvL = ctx.canvas({ title: '下段：合成波 y = y₁ + y₂（緑）', className: 'cmb' });
+
+  /* ---------- 物理 ---------- */
+  const isX = () => St.axis === 'x';
+  const W = () => (isX() ? St.Wx : St.Wt);
+  const per = i => (isX() ? St.lam[i] : 1 / St.f[i]);                 // 横軸方向の1周期（λ または T）
+  const shiftArr = () => (isX() ? St.sx : St.st);
+  const off = t => (isX() ? St.v * t : 0);                              // 進行による移動
+  const yi = (i, u, t) => St.A[i] * Math.sin(TAU * (u - shiftArr()[i] - off(t)) / per(i));
+  const ysum = (u, t) => yi(0, u, t) + yi(1, u, t);
+  const cursor = () => (isX() ? St.xg : sim.t);
+  let curT = 0;                                                          // 直近の描画時刻
+
+  /* ---------- 縦軸の範囲（振幅ドラッグ中は固定＝ポインタとずれない） ---------- */
+  let Ymax = 1.2, freezeY = false;
+  const updY = () => { if (!freezeY) Ymax = Math.max(0.6, St.A[0] + St.A[1]) * 1.18; };
+
+  /* ---------- 操作パネル ---------- */
+  const ro = ui.readout(ctx.controls, { label: '縦線の位置で', value: '' }); ro.box.querySelector('.readout').classList.add('big');
+  const roPos = ui.readout(ctx.controls, { label: '着目点', value: '' });
+  ui.legend(ctx.controls, [[C.wave1, 'y₁'], [C.wave2, 'y₂'], [C.wave, 'y = y₁ + y₂'], [C.guide, '着目点の縦線（ドラッグ可）']]);
+  ui.sep(ctx.controls);
+  const selAxis = ui.select(ctx.controls, {
+    label: '横軸', value: 'x', options: [['x', '位置 x [m]（y-x グラフ）'], ['t', '時刻 t [s]（y-t グラフ）']],
+    onChange: v => setAxis(v)
+  });
+  const selPre = ui.select(ctx.controls, {
+    label: 'プリセット', value: 'free', options: [
+      ['free', '自由'], ['same', '同じ波長で山と山が重なる'], ['opp', '同じ波長で山と谷が重なる'],
+      ['beat', '波長（振動数）が少し違う'], ['double', '波長が2倍（2倍振動の重ね合わせ）']],
+    onChange: v => applyPreset(v)
+  });
+  ui.sep(ctx.controls);
+  const toFree = () => selPre.set('free', true);
+  const sA = [0, 1].map(i => ui.slider(ctx.controls, { label: i ? 'A₂' : 'A₁', min: 0, max: A_MAX, step: 0.01, value: St.A[i], unit: 'm', onInput: v => { St.A[i] = v; toFree(); } }));
+  const sLam = [0, 1].map(i => ui.slider(ctx.controls, { label: i ? 'λ₂' : 'λ₁', min: 0.25, max: 6, step: 0.05, value: St.lam[i], unit: 'm', onInput: v => { St.lam[i] = v; toFree(); } }));
+  const fFmt = v => fmt(v, 2) + ' Hz（T = ' + fmt(1 / v, 2) + ' s）';
+  const sF = [0, 1].map(i => ui.slider(ctx.controls, { label: i ? 'f₂' : 'f₁', min: 0.2, max: 5, step: 0.05, value: St.f[i], fmt: fFmt, onInput: v => { St.f[i] = v; toFree(); } }));
+  sF.forEach(s => { s.box.querySelector('.val').style.minWidth = '9.5rem'; });
+  // スライダーの値表示（val）の中の変数も斜体に
+  const fixValItalic = s => { const v = s.box.querySelector('.val'); const ob = new MutationObserver(() => { const h = mathHTML(v.textContent); if (v.innerHTML !== h) v.innerHTML = h; }); ob.observe(v, { childList: true, characterData: true, subtree: true }); v.innerHTML = mathHTML(v.textContent); };
+  sF.forEach(fixValItalic);
+  const sWx = ui.slider(ctx.controls, { label: '表示範囲（横軸の幅）', min: 1, max: 30, step: 0.5, value: St.Wx, unit: 'm', digits: 1, onInput: v => { St.Wx = v; St.xg = clamp(St.xg, 0, v); } });
+  const sWt = ui.slider(ctx.controls, { label: '表示範囲（横軸の幅）', min: 1, max: 20, step: 0.5, value: St.Wt, unit: 's', digits: 1, onInput: v => { St.Wt = v; } });
+  const roShift = ui.readout(ctx.controls, { label: 'ずれ', value: '' });
+  const tGhost = ui.toggle(ctx.controls, { label: '下段に y₁・y₂ も薄く重ねる', checked: St.ghost, onChange: b => { St.ghost = b; } });
+  ui.note(ctx.controls, '<b>重ね合わせの原理</b>：各点の変位は 2 つの波の変位の和 y = y₁ + y₂。縦線の位置で、y₁ の矢印（青）の先に y₂ の矢印（赤）をつなぐと、その先が合成波（緑）の点になる。曲線を動かすと、縦線の位置での y₁・y₂ が変わり、その和として合成波の点も動く。').classList.add('reason');
+  const noteTime = ui.note(ctx.controls, '');
+  noteTime.classList.add('reason');
+
+  /* 「詳しく」 */
+  const sV = ui.slider(ctx.detail, { label: '波の速さ v（位置 x のとき）', min: 0, max: 3, step: 0.05, value: St.v, unit: 'm/s', onInput: v => { St.v = v; } });
+  const tEnv = ui.toggle(ctx.detail, { label: '包絡線 ±2A cos(…) を破線で表示（A₁ = A₂ のとき）', checked: St.env, onChange: b => { St.env = b; } });
+  const roEnv = ui.readout(ctx.detail, { label: '', value: '' });
+  const envFormula = ui.formula(ctx.detail, '');
+  ui.note(ctx.detail, '<b>なぜこの形になるか</b>：A₁ = A₂ = A のとき、和積の公式 sin a + sin b = 2 cos((a − b)/2) sin((a + b)/2) から y = 2A cos((a − b)/2) · sin((a + b)/2)。2 つの波の 1 周期が近いと、(a − b)/2 は横軸に沿ってゆっくり変わり、sin((a + b)/2) は細かく振動する。だから細かい振動の振れ幅が、破線 ±2A cos((a − b)/2) の内側でゆっくり大きくなったり小さくなったりする。破線が 0 になる点では、y₁ と y₂ がちょうど逆向きで同じ大きさになっている（縦線をそこへ動かして矢印で確かめられる）。').classList.add('reason');
+
+  function syncAxisUI() {
+    const x = isX();
+    sLam.forEach(s => { s.box.hidden = !x; }); sF.forEach(s => { s.box.hidden = x; });
+    sWx.box.hidden = !x; sWt.box.hidden = x;
+    noteTime.innerHTML = mathHTML(x
+      ? '<b>時間バー</b>：位置 x のグラフでは、2 つの波が同じ速さ v で右へ進む時間（合成波の形もそのまま一緒に進む）。停止中も曲線・山の点・縦線はドラッグできる。<b>スローモーション表示</b>：実際の音は約 340 m/s で進むが、ここでは v を 1 m/s 前後まで遅くして見せている。'
+      : '<b>時間バー</b>：時刻 t のグラフでは、着目する時刻を示す縦線が左から右へ一定の速さで進み、右端に来たら左端へ戻る（記録計のペンのように）。時間バーの t ＝ 縦線の時刻。<b>スローモーション表示</b>：実際の音は 1 秒間に数百〜数千回振動するが、ここでは振動数を 1 秒間に数回まで下げて見せている（T = 1/f）。');
+    cvU.setTitle(x ? '上段：y₁（青）と y₂（赤）のある時刻の波形（y-x）　曲線をつかむ＝ずらす／山の点＝振幅' : '上段：y₁（青）と y₂（赤）のある位置での振動（y-t）　曲線をつかむ＝ずらす／山の点＝振幅');
+    cvL.setTitle(x ? '下段：合成波 y = y₁ + y₂（緑）の波形' : '下段：合成波 y = y₁ + y₂（緑）の振動');
+  }
+  function setAxis(v) {
+    St.axis = v; sim.reset();
+    if (selPre.get() !== 'free') applyPreset(selPre.get());
+    syncAxisUI();
+  }
+  function applyPreset(p) {
+    const x = isX();
+    const set = (A1, A2, p1, p2, s2, Wv) => {
+      St.A = [A1, A2];
+      if (x) { St.lam = [p1, p2]; St.sx = [0, s2]; St.Wx = Wv; St.xg = clamp(St.xg, 0, Wv); }
+      else { St.f = [p1, p2]; St.st = [0, s2]; St.Wt = Wv; }
+    };
+    if (p === 'same') x ? set(0.5, 0.5, 2, 2, 0, 8) : set(0.5, 0.5, 1, 1, 0, 4);
+    else if (p === 'opp') x ? set(0.5, 0.5, 2, 2, 1, 8) : set(0.5, 0.5, 1, 1, 0.5, 4);
+    else if (p === 'beat') x ? set(0.5, 0.5, 1.0, 1.1, 0, 24) : set(0.5, 0.5, 2.0, 2.2, 0, 10);
+    else if (p === 'double') x ? set(0.6, 0.35, 2, 1, 0, 8) : set(0.6, 0.35, 1, 2, 0, 4);
+    else return;
+    sim.reset();
+    sA.forEach((s, i) => s.set(St.A[i], true));
+    sLam.forEach((s, i) => s.set(St.lam[i], true));
+    sF.forEach((s, i) => s.set(St.f[i], true));
+    sWx.set(St.Wx, true); sWt.set(St.Wt, true);
+    freezeY = false; updY();
+  }
+
+  /* ---------- 山の取っ手（上段） ---------- */
+  const peakK = [0, 0];
+  const anchor = i => W() * (i ? 0.62 : 0.30);
+  const peakU = (i, k) => shiftArr()[i] + off(curT) + per(i) * (k + 0.25);
+  const chooseK = i => { const p = per(i); peakK[i] = Math.round((anchor(i) - shiftArr()[i] - off(curT)) / p - 0.25); };
+  let active = null;   // {kind:'h'|'curve'|'line', i}
+  let hover = null;
+  const handles = [0, 1].map(i => cvU.addHandle({
+    r: S(18) + 4, hidden: false, i,
+    get: () => ({ x: peakU(i, peakK[i]), y: St.A[i] }),
+    set: (x, y) => {
+      St.A[i] = clamp(Math.round(y * 100) / 100, 0, A_MAX); sA[i].set(St.A[i], true);
+      x = clamp(x, 0, W());
+      shiftArr()[i] = x - off(curT) - per(i) * (peakK[i] + 0.25);
+      toFree();
+    },
+    onStart: () => { active = { kind: 'h', i }; freezeY = true; },
+    onEnd: () => { active = null; freezeY = false; }
+  }));
+
+  /* ---------- 縦線・曲線のドラッグ（取っ手 > 縦線 > 曲線） ---------- */
+  const LINE_TOL = () => S(12) + 4, CURVE_TOL = () => S(14);
+  function hitTarget(cv, p, allowCurve) {
+    if (Math.abs(cv.px(cursor()) - p.x) <= LINE_TOL()) return { kind: 'line' };
+    if (!allowCurve) return null;
+    const u = cv.wx(p.x); let best = null, bd = CURVE_TOL();
+    for (const i of [0, 1]) { const d = Math.abs(cv.py(yi(i, u, curT)) - p.y); if (d <= bd) { bd = d; best = { kind: 'curve', i }; } }
+    return best;
+  }
+  let drag = null, wasRunning = false;
+  function setLine(u) {
+    if (isX()) St.xg = clamp(u, 0, St.Wx);
+    else sim.setT(clamp(u, 0, St.Wt - 1e-6));
+  }
+  function bindDrag(cv, allowCurve) {
+    cv.onDragStart = (wx, wy, p) => {
+      const h = hitTarget(cv, p, allowCurve);
+      if (!h) { drag = null; return; }
+      drag = Object.assign({ u0: wx }, h);
+      if (h.kind === 'curve') drag.s0 = shiftArr()[h.i];
+      if (h.kind === 'line' && !isX()) { wasRunning = sim.running; sim.pause(); }
+      active = h;
+    };
+    cv.onDrag = (wx) => {
+      if (!drag) return;
+      if (drag.kind === 'line') setLine(wx);
+      else { shiftArr()[drag.i] = drag.s0 + (wx - drag.u0); toFree(); }
+    };
+    cv.onDragEnd = () => {
+      if (drag && drag.kind === 'line' && !isX() && wasRunning) sim.play();
+      drag = null; active = null;
+    };
+    cv.el.addEventListener('pointermove', ev => {   // ホバー表示とカーソル（common の後に登録＝上書き）
+      if (cv._down) { if (drag || cv._down.h) cv.el.style.cursor = drag && drag.kind === 'line' ? 'ew-resize' : 'grabbing'; return; }
+      const r = cv.el.getBoundingClientRect(); const p = { x: ev.clientX - r.left, y: ev.clientY - r.top };
+      const hh = cv._hit(p);
+      hover = hh ? { kind: 'h', i: hh.i } : hitTarget(cv, p, allowCurve);
+      cv.el.style.cursor = !hover ? 'pointer' : hover.kind === 'line' ? 'ew-resize' : 'grab';
+    });
+    cv.el.addEventListener('pointerleave', () => { if (!cv._down) hover = null; });
+  }
+  bindDrag(cvU, true); bindDrag(cvL, false);
+
+  /* ---------- 描画 ---------- */
+  const hl = i => (active && active.i === i && active.kind !== 'line') || (!active && hover && hover.i === i && hover.kind !== 'line');
+  const lineHl = () => (active && active.kind === 'line') || (!active && hover && hover.kind === 'line');
+  function setupPanel(cv) {
+    cv.clear(); cv.setView({ x0: 0, x1: W(), y0: -Ymax, y1: Ymax });
+    cv.axes({ xLabel: isX() ? 'x [m]' : 't [s]', yLabel: 'y [m]' });
+  }
+  function drawLine(cv) {
+    const u = cursor(), X = cv.px(u), on = lineHl();
+    cv.linePx(X, cv.pad.t, X, cv.pad.t + cv.ih, { color: C.guide, width: on ? 3 : 2, dash: [7, 5] });
+    // 取っ手（上端のつまみ）
+    const g = cv.ctx, w = S(16), h = S(14), y0 = cv.pad.t;
+    g.save(); g.fillStyle = on ? C.yellow : C.guide; g.beginPath();
+    g.moveTo(X - w / 2, y0); g.lineTo(X + w / 2, y0); g.lineTo(X + w / 2, y0 + h * 0.6); g.lineTo(X, y0 + h); g.lineTo(X - w / 2, y0 + h * 0.6); g.closePath(); g.fill();
+    g.strokeStyle = C.bg; g.lineWidth = 1.2 * SC; g.beginPath(); g.moveTo(X - w * 0.18, y0 + h * 0.18); g.lineTo(X - w * 0.18, y0 + h * 0.55); g.moveTo(X + w * 0.18, y0 + h * 0.18); g.lineTo(X + w * 0.18, y0 + h * 0.55); g.stroke();
+    g.restore();
+  }
+  // 値ラベル群: 左右の置き場所を決め（はみ出すなら反対側へ）、同じ側で近いものは上下に離して描く
+  function labels(cv, list) {
+    const g = cv.ctx; g.save(); g.font = 'bold ' + (14 * SC) + 'px system-ui,sans-serif';
+    list.forEach(L => {
+      const w = g.measureText(L.str).width * 1.08 + S(12);
+      L.al = L.side;
+      if (L.side === 'right' && L.X + S(10) + w > cv.w - 2) L.al = 'left';
+      if (L.side === 'left' && L.X - S(10) - w < 2) L.al = 'right';
+    });
+    g.restore();
+    const gap = S(19), lo = cv.pad.t + S(10), hi = cv.pad.t + cv.ih - S(10);
+    for (const side of ['left', 'right']) {
+      const grp = list.filter(L => L.al === side).sort((a, b) => a.Y - b.Y);
+      grp.forEach(L => { L.Y = clamp(L.Y, lo, hi); });
+      for (let k = 1; k < grp.length; k++) if (grp[k].Y - grp[k - 1].Y < gap) grp[k].Y = grp[k - 1].Y + gap;
+      const over = grp.length ? grp[grp.length - 1].Y - hi : 0;      // 下にはみ出したら全体を上へ
+      if (over > 0) grp.forEach(L => { L.Y -= over; });
+    }
+    list.forEach(L => cv.textPx(L.str, L.X + (L.al === 'right' ? S(10) : -S(10)), L.Y, { align: L.al === 'right' ? 'left' : 'right', color: L.color, bold: true, size: 14 }));
+  }
+  function drawUpper(t) {
+    const cv = cvU, cols = COL(); setupPanel(cv);
+    cv.clip(() => {
+      for (const i of [0, 1]) cv.plot(u => yi(i, u, t), { color: cols[i], width: hl(i) ? 4.6 : 2.6 });
+    });
+    drawLine(cv);
+    const u = cursor(), X = cv.px(u), Y0 = cv.py(0), d = S(5);
+    const v1 = yi(0, u, t), v2 = yi(1, u, t);
+    cv.arrowPx(X - d, Y0, X - d, cv.py(v1), { color: cols[0], width: 3, head: 10 });
+    cv.arrowPx(X + d, Y0, X + d, cv.py(v2), { color: cols[1], width: 3, head: 10 });
+    const ring = PROJ ? '#ffffff' : '#000000';
+    cv.dotPx(X, cv.py(v1), 5.5, { color: cols[0], stroke: ring, width: 1.5 * SC });
+    cv.dotPx(X, cv.py(v2), 5.5, { color: cols[1], stroke: ring, width: 1.5 * SC });
+    labels(cv, [{ str: 'y₁ = ' + mfmt(v1), X: X - d, Y: cv.py(v1), side: 'left', color: cols[0] },
+                { str: 'y₂ = ' + mfmt(v2), X: X + d, Y: cv.py(v2), side: 'right', color: cols[1] }]);
+    // 山の取っ手
+    for (const i of [0, 1]) {
+      const hd = handles[i];
+      if (!(active && active.kind === 'h' && active.i === i)) chooseK(i);
+      const q = hd.get(); hd.hidden = q.x < 0 || q.x > W();
+      if (hd.hidden) continue;
+      const HX = cv.px(q.x), HY = cv.py(q.y), on = hl(i);
+      if (on) { const g = cv.ctx; g.save(); g.strokeStyle = cols[i]; g.lineWidth = 2 * SC; g.beginPath(); g.arc(HX, HY, S(13), 0, TAU); g.stroke(); g.restore(); }
+      cv.dotPx(HX, HY, on ? 8.5 : 7, { color: cols[i], stroke: ring, width: 2 * SC });
+      cv.textPx(i ? 'A₂' : 'A₁', HX, HY - S(17), { color: cols[i], bold: true, size: 13 });
+    }
+    // 操作中の表示
+    const msg = active ? (active.kind === 'line' ? '縦線を動かしています' : active.kind === 'h' ? (active.i ? 'y₂' : 'y₁') + ' の山：上下＝振幅／左右＝ずらす' : (active.i ? 'y₂' : 'y₁') + ' をずらしています') : '';
+    cv.overlay.innerHTML = mathHTML(msg);
+  }
+  function drawLower(t) {
+    const cv = cvL, cols = COL(); setupPanel(cv);
+    const env = St.env && Math.abs(St.A[0] - St.A[1]) < 0.005;
+    cv.clip(() => {
+      if (env) {
+        const A = St.A[0];
+        const e = u => { const a = TAU * (u - shiftArr()[0] - off(t)) / per(0), b = TAU * (u - shiftArr()[1] - off(t)) / per(1); return 2 * A * Math.cos((a - b) / 2); };
+        cv.plot(e, { color: C.yellow, width: 1.8, dash: [6, 5] }); cv.plot(u => -e(u), { color: C.yellow, width: 1.8, dash: [6, 5] });
+      }
+      if (St.ghost) for (const i of [0, 1]) cv.plot(u => yi(i, u, t), { color: cols[i], width: 1.6, alpha: PROJ ? 0.55 : 0.4 });
+      cv.plot(u => ysum(u, t), { color: C.wave, width: 4 });
+    });
+    drawLine(cv);
+    const u = cursor(), X = cv.px(u), Y0 = cv.py(0), d = S(11);
+    const v1 = yi(0, u, t), v2 = yi(1, u, t), y = v1 + v2;
+    const Xb = X - d;                                   // 青は少し左、赤は縦線上（先端＝合成波の点）
+    cv.arrowPx(Xb, Y0, Xb, cv.py(v1), { color: cols[0], width: 3, head: 10 });
+    cv.linePx(Xb, cv.py(v1), X, cv.py(v1), { color: cols[0], width: 1.6, dash: [3, 3] });
+    cv.arrowPx(X, cv.py(v1), X, cv.py(y), { color: cols[1], width: 3, head: 10 });
+    const ring = PROJ ? '#ffffff' : '#000000';
+    cv.dotPx(X, cv.py(v1), 3, { color: cols[0] });
+    cv.dotPx(X, cv.py(y), 6.5, { color: C.wave, stroke: ring, width: 1.8 * SC });
+    // ラベル: y₁ は青矢印の中ほど左、y₂ は赤矢印の中ほど右、y は緑の点の右（重ならないよう調整）
+    const m1 = (Y0 + cv.py(v1)) / 2, m2 = (cv.py(v1) + cv.py(y)) / 2;
+    const Yy = cv.py(y);
+    labels(cv, [{ str: 'y₁ = ' + mfmt(v1), X: Xb, Y: m1, side: 'left', color: cols[0] },
+                { str: 'y₂ = ' + mfmt(v2), X: X, Y: m2, side: 'right', color: cols[1] },
+                { str: 'y = ' + mfmt(y), X: X, Y: Yy + (v2 >= 0 ? -S(4) : S(4)), side: 'right', color: C.wave }]);
+    cv.overlay.innerHTML = active && active.kind === 'line' ? mathHTML('縦線を動かしています') : '';
+  }
+
+  function updReadouts(t) {
+    const u = cursor(), v1 = yi(0, u, t), v2 = yi(1, u, t);
+    ro.set(`<span class="wv1">y₁ = ${mfmt(v1)} m</span>　<span class="wv2">y₂ = ${mfmt(v2)} m</span>　<b>y = y₁ + y₂ = ${mfmt(v1 + v2)} m</b>`);
+    roPos.set(isX() ? `x = ${fmt(u, 2)} m` : `t = ${fmt(u, 2)} s`);
+    const s = shiftArr(), q = isX() ? 'Δx' : 'Δt', un = isX() ? 'm' : 's', P = isX() ? 'λ' : 'T';
+    const w1 = mod(s[0], per(0)), w2 = mod(s[1], per(1));
+    let txt = `y₁：${q}₁ = ${fmt(w1, 2)} ${un}　y₂：${q}₂ = ${fmt(w2, 2)} ${un}`;
+    const same = isX() ? Math.abs(St.lam[0] - St.lam[1]) < 1e-9 : Math.abs(St.f[0] - St.f[1]) < 1e-9;
+    if (same) { const dd = mod(s[1] - s[0], per(0)); txt += `　（y₂ は y₁ より ${q} = ${fmt(dd, 2)} ${un} ${isX() ? '右' : '遅れ'}、${q}/${P} = ${fmt(dd / per(0), 3)}）`; }
+    roShift.set(txt);
+    // 詳しく: 包絡線
+    const eq = Math.abs(St.A[0] - St.A[1]) < 0.005;
+    if (isX()) {
+      const k = Math.abs(1 / St.lam[0] - 1 / St.lam[1]);
+      roEnv.set(!eq ? '包絡線は A₁ = A₂ のときだけ表示（今は A₁ ≠ A₂）' : k < 1e-9 ? 'λ₁ = λ₂ なので破線は x によらず一定（振れ幅 2A|cos(…)| のまま）' : `破線が 0 になる間隔：1 / |1/λ₁ − 1/λ₂| = ${fmt(1 / k, 2)} m`);
+      envFormula.set('a = 2π(x − Δx₁ − vt)/λ₁,　b = 2π(x − Δx₂ − vt)/λ₂');
+    } else {
+      const k = Math.abs(St.f[0] - St.f[1]);
+      roEnv.set(!eq ? '包絡線は A₁ = A₂ のときだけ表示（今は A₁ ≠ A₂）' : k < 1e-9 ? 'f₁ = f₂ なので破線は t によらず一定（振れ幅 2A|cos(…)| のまま）' : `破線が 0 になる間隔：1 / |f₁ − f₂| = ${fmt(1 / k, 2)} s（(a − b)/2 が π 変わる時間）`);
+      envFormula.set('a = 2πf₁(t − Δt₁),　b = 2πf₂(t − Δt₂)');
+    }
+  }
+
+  syncAxisUI();
+
+  window.__oto_debug = {
+    St, sim, cvU, cvL, yi: (i, u) => yi(i, u, curT), ysum: u => ysum(u, curT), cursor, per, W,
+    setAxis: v => selAxis.set(v), preset: v => selPre.set(v), peak: i => handles[i].get(), curT: () => curT,
+    toggleEnv: b => tEnv.set(b), toggleGhost: b => tGhost.set(b)
+  };
+
+  return {
+    loop: () => (isX() ? 0 : St.Wt),
+    tMax: () => (isX() ? 0 : St.Wt),
+    timeLabel: t => (isX() ? `<i>t</i> = ${fmt(t, 2)} s（波が進んだ時間）` : `<i>t</i> = ${fmt(t, 2)} s（縦線の時刻）`),
+    draw(t) {
+      curT = t; updY();
+      drawUpper(t); drawLower(t); updReadouts(t);
+    }
+  };
+}
+
+Nami.init({
+  title: '2つの正弦波の合成',
+  appName: 'おとラボ', appHref: './index.html',
+  footerBase: '縦線・曲線・山の点はドラッグで動かせます（停止中も可）。画面をクリック／タップで停止・再開。',
+  tabs: [{ id: 'combine', label: '2つの正弦波の合成', period: () => (St.axis === 'x' ? St.lam[0] / Math.max(0.05, St.v) : 1 / St.f[0]), build: buildCombine }]
+});
+})();
+</script>
+</body></html>

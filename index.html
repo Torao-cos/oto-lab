@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>おとラボ - Oto Lab</title>
-<script>(function(){var m=null;try{m=new URLSearchParams(location.search).get('mode')}catch(e){}if(m!=='proj'&&m!=='dark'){try{m=localStorage.getItem('oto.mode')}catch(e){}}document.documentElement.dataset.mode=(m==='proj')?'proj':'dark';})();</script>
+<script>(function(){var m=null;try{m=new URLSearchParams(location.search).get('mode')}catch(e){}if(m!=='proj'&&m!=='dark'){try{m=localStorage.getItem('nami.mode')}catch(e){}}document.documentElement.dataset.mode=(m==='proj')?'proj':'dark';})();</script>
 <style>
   /* 基本テーマ */
   :root{
@@ -35,6 +35,7 @@
   .tabs button{flex:1;font-weight:800;font-size:clamp(1rem,2.5vw,1.25rem)}
   .tabs .modeBtn{flex:0 0 auto;font-size:clamp(.85rem,2vw,1rem);padding:.45rem .7rem;white-space:nowrap}
   .modeBtn .short{display:none}
+  .tabs .simSel{flex:0 0 auto;max-width:11rem;padding:.45rem .5rem;font-size:clamp(.85rem,2vw,1rem)}
   main{flex:1;min-height:0;display:flex;flex-direction:column}
   .view{display:none;flex:1;min-height:0;padding:.7rem;gap:.7rem}
   .view.show{display:flex}
@@ -62,6 +63,7 @@
   .master{display:flex;gap:.8rem;align-items:center;flex-wrap:wrap;padding:.75rem;border-top:1px solid var(--line);background:var(--panel3)}
   .beat{margin-left:auto;color:var(--yellow);font-size:clamp(1rem,2.7vw,1.45rem);font-weight:900}
   footer{padding:.5rem .8rem;color:var(--muted);background:var(--bg2);border-top:1px solid var(--line);font-size:.9rem}
+  footer a{color:var(--blue)}
   @media (min-width:900px){
     .view.both.wide{flex-direction:row}
     .view.both.wide .scopePanel{flex:1.35}
@@ -80,6 +82,7 @@
     .tabs button{padding:.55rem .4rem;font-size:clamp(.85rem,3.6vw,1rem)}
     .modeBtn .full{display:none}
     .modeBtn .short{display:inline}
+    .tabs .simSel{max-width:6.5rem;padding:.45rem .2rem}
   }
 </style>
 </head>
@@ -89,6 +92,15 @@
     <button id="tabScope" class="active">オシロスコープ</button>
     <button id="tabTone">音源</button>
     <button id="tabBoth">両方</button>
+    <select id="simSel" class="simSel" title="音のシミュレーションのページへ移動">
+      <option value="">シミュレーション…</option>
+      <option value="combine.html">2つの正弦波の合成</option>
+      <option value="quincke.html">クインケ管の干渉</option>
+      <option value="resonance.html#string">弦の固有振動</option>
+      <option value="resonance.html#drive">振動子で弦を振らせる</option>
+      <option value="resonance.html#pipe">気柱の固有振動</option>
+      <option value="resonance.html#tube">気柱の共鳴実験</option>
+    </select>
     <button id="modeBtn" class="modeBtn"></button>
   </nav>
 
@@ -102,7 +114,7 @@
   <footer>
     マイク開始後、波形をタップすると停止/再開。ピンチ・ホイール（Shift+ホイールで振幅）・ボタンで拡大縮小。<br>
     観察対象「音源(直結)」はスピーカーを通らない理想の波形です。マイク観察では矩形波などはスピーカー・マイクの特性で形が崩れて見えます（それ自体が教材になります）。<br>
-    音源A/Bを同時に鳴らすと、うなり振動数を表示します。 © SciCos / MIT License
+    音源A/Bを同時に鳴らすと、うなり振動数を表示します。　音のシミュレーション: <a href="combine.html">2つの正弦波の合成</a>／<a href="quincke.html">クインケ管</a>／<a href="resonance.html">弦の振動と気柱の共鳴</a>　 © SciCos / MIT License
   </footer>
 
 <script>
@@ -121,12 +133,13 @@
   function setMode(m){
     MODE = m; C = PALETTE[m]; SC = m==="proj" ? 1.6 : 1;
     document.documentElement.dataset.mode = m;
-    try{ localStorage.setItem("oto.mode",m); }catch(e){}
+    try{ localStorage.setItem("nami.mode",m); }catch(e){}
     try{ const u=new URL(location.href); u.searchParams.set("mode",m); history.replaceState(null,"",u.toString()); }catch(e){}
     modeBtn.innerHTML = m==="proj" ? '<span class="full">手元モードへ</span><span class="short">手元</span>' : '<span class="full">投影モードへ</span><span class="short">投影</span>';
     modeBtn.title = m==="proj" ? "暗い背景・細い線（手元でいじる用）に切り替える" : "白地・黒字・太線・大きい文字（プロジェクター投影用）に切り替える";
     setTimeout(resizeCanvases,0); // 文字サイズ(118%)が変わるとレイアウトも変わる
   }
+  byId("simSel").onchange=e=>{ const v=e.target.value; if(!v) return; const u=new URL(v,location.href); if(MODE==="proj") u.searchParams.set("mode","proj"); location.href=u.toString(); };
   modeBtn.onclick=()=>setMode(MODE==="proj" ? "dark" : "proj");
 
   /* DOM生成 */
