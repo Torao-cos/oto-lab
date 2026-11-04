@@ -58,6 +58,30 @@ const near = (a, b, e = 1e-6) => Math.abs(a - b) <= e;
       check(`[${tag}] 読み出しが変わる`, after.ro !== before.ro, after.ro.slice(0, 80));
       check(`[${tag}] d スライダーが同期`, Math.abs(parseFloat(after.sl) - after.d) < 0.06, after.sl);
       check(`[${tag}] 振幅-d グラフに記録が増える`, after.n > before.n + 20, `${before.n} → ${after.n}`);
+      // 削除した説明文が画面に無い
+      { const txt = await page.evaluate(() => document.body.innerText);
+        const banned = ['隣り合う密の位置', '画面クリックで停止', '※', 'なぜ？', '数えてみよう', 'ドラッグして'];
+        const hit = banned.filter(b => txt.includes(b));
+        check(`[${tag}] 削除した説明文が無い`, hit.length === 0, hit.join(','));
+        check(`[${tag}] 凡例・読み出しは残る`, txt.includes('経路差 ΔL') && txt.includes('λ = v/f')); }
+      // ΔL 目盛り: f=1000 Hz で「λ」が d=17 cm・f を変えると移る・線間 4px 以上
+      { const tk = await page.evaluate(async () => {
+          const q = window.__qk, wait = () => new Promise(r => setTimeout(r, 120)), out = {};
+          const pick = () => q.dlTicks.map(t => ({ ...t }));
+          q.setF(1000); await wait(); out.a = pick();
+          q.setF(1500); await wait(); out.b = pick(); out.lamB = q.lam();
+          q.setF(3000); await wait(); out.c = pick();
+          q.setF(1000); await wait();
+          return out;
+        });
+        const l1 = tk.a.find(t => t.label === 'λ'), l2 = tk.a.find(t => t.label === '2λ'), h1 = tk.a.find(t => t.label === 'λ/2');
+        check(`[${tag}] f=1000Hz で「λ」目盛りが d=17 cm`, l1 && near(l1.d, 17, 1e-9) && l1.major, JSON.stringify(l1));
+        check(`[${tag}] f=1000Hz で「λ/2」が d=8.5・「2λ」は d=34>dMax で無し`, h1 && near(h1.d, 8.5, 1e-9) && !h1.major && !l2, JSON.stringify(tk.a.map(t => t.label + '@' + t.d)));
+        const lb = tk.b.find(t => t.label === 'λ');
+        check(`[${tag}] f=1500Hz で「λ」目盛りが d=λ/2 へ移る`, lb && near(lb.d, tk.lamB / 2, 1e-9) && Math.abs(lb.py - l1.py) > 20, JSON.stringify(lb));
+        const gaps = tk.c.slice(1).map((t, i) => Math.abs(t.py - tk.c[i].py));
+        check(`[${tag}] f=3000Hz でも目盛り線の間隔 ≥ 4px`, gaps.length > 0 && Math.min(...gaps) >= 4, 'min ' + Math.min(...gaps).toFixed(1) + 'px n=' + tk.c.length); }
+      await page.screenshot({ path: path.join(OUT, `quincke-${tag}-dlticks.png`), fullPage: false });
       if (errors.length === 0 && mode === 'dark' && W === 1280) {
         // 物理量チェック
         const phys = await page.evaluate(() => {

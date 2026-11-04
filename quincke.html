@@ -154,8 +154,6 @@ function buildQuincke(ctx) {
   const volS = ui.slider(cl, { label: '音量', min: 0, max: 100, step: 1, value: 20, fmt: x => fmt(x, 0) + ' %', onInput: x => { snd.vol = x / 100; snd.lastG = -1; } });
   ui.button(volS.box, { label: '■ 音を止める', className: 'btnMini stopSnd', onClick: () => { sT.set(false); } });
 
-  ui.sep(cl);
-  ui.note(cl, '隣り合う密の位置（管を横切る線）の間隔が 1 波長 λ。');
 
   /* 詳しく */
   const dt = ctx.detail;
@@ -243,6 +241,24 @@ function buildQuincke(ctx) {
       if (big && (k % 10 === 0 || cvP.sx > 5.5)) tx(String(k), x + 3.4, y, { color: C.muted, size: 11, align: 'left', bg: false });
     }
     tx('d [cm]', x + 1.5, y1 - 2.4, { color: C.muted, size: 12, bold: true, bg: false });
+    // ΔL = 2d の目盛り（λ/2 の整数倍ごと・λ の整数倍は太く）: d = nλ/4
+    { const xL = x + 8, l = lam(), stepPx = l / 4 * cvP.sx, lblPx = 14 * TS;
+      let every = 1; while (stepPx * every < 4) every++;            // 線どうし 4px 以上
+      if (every > 1 && every % 2) every++;                            // 間引く時は λ の整数倍だけ残す
+      const halfLbl = stepPx >= lblPx, intEvery = Math.max(1, Math.ceil(lblPx / (2 * stepPx)));
+      cvP.line(xL, y0, xL, y1, { color: C.text, width: 1.5 });
+      const ticks = [];
+      for (let n = every; n * l / 4 <= G.dMax + 1e-9; n += every) {
+        const dd = n * l / 4, y = y0 - dd, major = n % 2 === 0, m = n / 2;
+        cvP.line(xL, y, xL + (major ? 2.4 : 1.3), y, { color: C.text, width: major ? 2.6 : 1.2 });
+        let lb = '';
+        if (major) { if (m % intEvery === 0) lb = (m === 1 ? '' : String(m)) + 'λ'; }
+        else if (halfLbl) lb = (n === 1 ? '' : String(n)) + 'λ/2';
+        if (lb) tx(lb, xL + 3.4, y, { color: C.text, size: major ? 12 : 11, bold: major, align: 'left', bg: false });
+        ticks.push({ n, d: dd, major, label: lb, py: cvP.py(y) });
+      }
+      tx('ΔL', xL + 2.5, y1 - 2.4, { color: C.text, size: 13, bold: true, bg: false });
+      dbg.dlTicks = ticks; dbg.dlAxisX = xL; }
     // 現在の d
     const yc = y0 - st.d;
     cvP.line(G.W + G.tw / 2 + 0.6, yc, x + 2.4, yc, { color: C.yellow, width: 1.6, dash: [4, 3] });
@@ -296,7 +312,7 @@ function buildQuincke(ctx) {
       const path2 = makeLoop(-1, st.d);
       dbg.path2L = path2.L;
       /* ===== 管の図 ===== */
-      const bx0 = -G.Lin - 8, bx1 = Math.max(G.W + G.Lout + 9, G.W + 17), by0 = -(G.h + G.dMax) - 3.5, by1 = G.h + 7;
+      const bx0 = -G.Lin - 8, bx1 = Math.max(G.W + G.Lout + 9, G.W + 27), by0 = -(G.h + G.dMax) - 3.5, by1 = G.h + 7;
       cvP.clear();
       { const iw = Math.max(1, cvP.iw), ih = Math.max(1, cvP.ih); const sc = Math.min(iw / (bx1 - bx0), ih / (by1 - by0)); const hw = iw / sc / 2;
         cvP.setView({ x0: (bx0 + bx1) / 2 - hw, x1: (bx0 + bx1) / 2 + hw, y0: (by0 + by1) / 2 - ih / sc / 2, y1: (by0 + by1) / 2 + ih / sc / 2 }); }
@@ -396,7 +412,7 @@ function syncSoundToggle() { document.querySelectorAll('.controls label').forEac
 Nami.init({
   title: 'クインケ管の干渉',
   appName: 'おとラボ', appHref: './index.html',
-  footerBase: '画面クリックで停止・再開。',
+  footerBase: '',
   tabs: [{ id: 'quincke', label: 'クインケ管の干渉', period: () => st.Tanim, build: ctx => { const api = buildQuincke(ctx); return api; } }]
 });
 })();
