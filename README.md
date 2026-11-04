@@ -5,11 +5,13 @@
 
 🔗 **アプリを使う**: https://torao-cos.github.io/oto-lab/ （GitHub Pages）
 
-## 音のシミュレーション
+## 音のシミュレーション（なみラボへ移しました）
 
-- [正弦波の合成](https://torao-cos.github.io/oto-lab/combine.html) — 最大3本の正弦波（倍音など）の重ね合わせ。縦線・曲線・山の点をドラッグ
-- [クインケ管の干渉](https://torao-cos.github.io/oto-lab/quincke.html) — U字管を引き出して経路差と B での振幅の関係を見る
-- [弦の振動と気柱の共鳴](https://torao-cos.github.io/oto-lab/resonance.html) — 弦の固有振動／振動子で弦を振らせる／気柱の固有振動／気柱の共鳴実験
+- [正弦波の合成](https://torao-cos.github.io/nami-lab/sound.html#combine) — なみラボ「F 音」20
+- [クインケ管の干渉](https://torao-cos.github.io/nami-lab/applied.html#quincke) — なみラボ「E 応用」19
+- [弦の振動と気柱の共鳴](https://torao-cos.github.io/nami-lab/sound.html#string) — なみラボ「F 音」21〜24（弦の固有振動／振動子で弦を振らせる／気柱の固有振動／気柱の共鳴実験）
+
+旧 URL（`combine.html`・`quincke.html`・`resonance.html`）は移転先へ自動で移動します（`?mode=proj` とタブの指定を引き継ぎ）。
 
 ## 特徴
 

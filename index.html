@@ -31,6 +31,12 @@
   button:active{transform:translateY(1px)}
   .active{background:var(--green2);border-color:var(--green);color:var(--onGreen)}
   .danger{background:var(--red);border-color:var(--redLine);color:white;font-weight:800}
+  /* パンくず（なみラボ common.css の header.top .crumb と同じ見た目） */
+  header.top{display:flex;align-items:center;gap:.6rem;padding:.45rem .8rem;background:var(--bg2);border-bottom:1px solid var(--line);flex-wrap:wrap}
+  header.top .crumb{color:var(--muted);font-size:.95rem;display:flex;gap:.4rem;align-items:center;flex-wrap:wrap}
+  header.top .crumb a{color:var(--muted);text-decoration:none}
+  header.top .crumb a:hover{color:var(--text)}
+  header.top .title{font-weight:900;font-size:clamp(1.05rem,2.4vw,1.35rem);color:var(--text)}
   .tabs{display:flex;gap:.5rem;padding:.65rem;background:var(--bg2);border-bottom:1px solid var(--line)}
   .tabs button{flex:1;font-weight:800;font-size:clamp(1rem,2.5vw,1.25rem)}
   .tabs .modeBtn{flex:0 0 auto;font-size:clamp(.85rem,2vw,1rem);padding:.45rem .7rem;white-space:nowrap}
@@ -87,6 +93,7 @@
 </style>
 </head>
 <body>
+  <header class="top"><div class="crumb"><a href="../scicos-lab/">SciCos 理科ラボ</a>›<span class="title">おとラボ</span></div></header>
   <!-- 画面切替タブ -->
   <nav class="tabs">
     <button id="tabScope" class="active">オシロスコープ</button>
@@ -94,12 +101,12 @@
     <button id="tabBoth">両方</button>
     <select id="simSel" class="simSel" title="音のシミュレーションのページへ移動">
       <option value="">シミュレーション…</option>
-      <option value="combine.html">正弦波の合成</option>
-      <option value="quincke.html">クインケ管の干渉</option>
-      <option value="resonance.html#string">弦の固有振動</option>
-      <option value="resonance.html#drive">振動子で弦を振らせる</option>
-      <option value="resonance.html#pipe">気柱の固有振動</option>
-      <option value="resonance.html#tube">気柱の共鳴実験</option>
+      <option value="https://torao-cos.github.io/nami-lab/sound.html#combine">正弦波の合成</option>
+      <option value="https://torao-cos.github.io/nami-lab/applied.html#quincke">クインケ管の干渉</option>
+      <option value="https://torao-cos.github.io/nami-lab/sound.html#string">弦の固有振動</option>
+      <option value="https://torao-cos.github.io/nami-lab/sound.html#drive">振動子で弦を振らせる</option>
+      <option value="https://torao-cos.github.io/nami-lab/sound.html#pipe">気柱の固有振動</option>
+      <option value="https://torao-cos.github.io/nami-lab/sound.html#tube">気柱の共鳴実験</option>
     </select>
     <button id="modeBtn" class="modeBtn"></button>
   </nav>
@@ -114,7 +121,7 @@
   <footer>
     マイク開始後、波形をタップすると停止/再開。ピンチ・ホイール（Shift+ホイールで振幅）・ボタンで拡大縮小。<br>
     観察対象「音源(直結)」はスピーカーを通らない理想の波形です。マイク観察では矩形波などはスピーカー・マイクの特性で形が崩れて見えます（それ自体が教材になります）。<br>
-    音源A/Bを同時に鳴らすと、うなり振動数を表示します。　音のシミュレーション: <a href="combine.html">正弦波の合成</a>／<a href="quincke.html">クインケ管</a>／<a href="resonance.html">弦の振動と気柱の共鳴</a>　 © SciCos / MIT License
+    音源A/Bを同時に鳴らすと、うなり振動数を表示します。　音のシミュレーション: <a href="https://torao-cos.github.io/nami-lab/sound.html#combine">正弦波の合成</a>／<a href="https://torao-cos.github.io/nami-lab/applied.html#quincke">クインケ管</a>／<a href="https://torao-cos.github.io/nami-lab/sound.html#string">弦の振動と気柱の共鳴</a>　 © SciCos / MIT License
   </footer>
 
 <script>
