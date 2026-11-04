@@ -7,6 +7,8 @@
   .panel.cmb{min-height:280px}
   .controls .note.reason{color:var(--text);opacity:.92;line-height:1.55;font-size:.88rem}
   .controls .readout.big{font-size:1.12rem}
+  .num{display:inline-block;text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+
   .controls .ctlLabel.hdr{font-weight:900}
   .controls .wv1{color:var(--blue);font-weight:900}
   .controls .wv2{color:var(--red);font-weight:900}
@@ -25,6 +27,7 @@
 const { C, TAU, ui, fmt, clamp, PROJ, SC, mathHTML } = Nami;
 const S = v => v * SC;
 const mfmt = (v, d = 2) => fmt(v, d).replace('-', '−');           // 表示用のマイナス記号
+const N = (v, d = 2, w = 5) => `<span class="num" style="min-width:${w}ch">${mfmt(v, d)}</span>`; // 固定幅の数値（読み出し欄が値の長さで伸び縮みして改行・ちらつきしないように）
 const mod = (a, b) => a - Math.floor(a / b) * b;
 const COL = () => [C.wave1, C.wave2];
 
@@ -301,13 +304,13 @@ function buildCombine(ctx) {
 
   function updReadouts(t) {
     const u = cursor(), v1 = yi(0, u, t), v2 = yi(1, u, t);
-    ro.set(`<span class="wv1">y₁ = ${mfmt(v1)} m</span>　<span class="wv2">y₂ = ${mfmt(v2)} m</span>　<b>y = y₁ + y₂ = ${mfmt(v1 + v2)} m</b>`);
-    roPos.set(isX() ? `x = ${fmt(u, 2)} m` : `t = ${fmt(u, 2)} s`);
+    ro.set(`<span class="wv1">y₁ = ${N(v1)} m</span>　<span class="wv2">y₂ = ${N(v2)} m</span>　<b>y = y₁ + y₂ = ${N(v1 + v2)} m</b>`);
+    roPos.set(isX() ? `x = ${N(u, 2, 6)} m` : `t = ${N(u, 2, 6)} s`);
     const s = shiftArr(), q = isX() ? 'Δx' : 'Δt', un = isX() ? 'm' : 's', P = isX() ? 'λ' : 'T';
     const w1 = mod(s[0], per(0)), w2 = mod(s[1], per(1));
-    let txt = `y₁：${q}₁ = ${fmt(w1, 2)} ${un}　y₂：${q}₂ = ${fmt(w2, 2)} ${un}`;
+    let txt = `y₁：${q}₁ = ${N(w1, 2, 6)} ${un}　y₂：${q}₂ = ${N(w2, 2, 6)} ${un}`;
     const same = isX() ? Math.abs(St.lam[0] - St.lam[1]) < 1e-9 : Math.abs(St.f[0] - St.f[1]) < 1e-9;
-    if (same) { const dd = mod(s[1] - s[0], per(0)); txt += `　（y₂ は y₁ より ${q} = ${fmt(dd, 2)} ${un} ${isX() ? '右' : '遅れ'}、${q}/${P} = ${fmt(dd / per(0), 3)}）`; }
+    if (same) { const dd = mod(s[1] - s[0], per(0)); txt += `　（y₂ は y₁ より ${q} = ${N(dd, 2, 6)} ${un} ${isX() ? '右' : '遅れ'}、${q}/${P} = ${N(dd / per(0), 3, 6)}）`; }
     roShift.set(txt);
     // 詳しく: 包絡線
     const eq = Math.abs(St.A[0] - St.A[1]) < 0.005;
@@ -333,7 +336,7 @@ function buildCombine(ctx) {
   return {
     loop: () => (isX() ? 0 : St.Wt),
     tMax: () => (isX() ? 0 : St.Wt),
-    timeLabel: t => (isX() ? `<i>t</i> = ${fmt(t, 2)} s（波が進んだ時間）` : `<i>t</i> = ${fmt(t, 2)} s（縦線の時刻）`),
+    timeLabel: t => (isX() ? `<i>t</i> = ${N(t, 2, 6)} s（波が進んだ時間）` : `<i>t</i> = ${N(t, 2, 6)} s（縦線の時刻）`),
     draw(t) {
       curT = t; updY();
       drawUpper(t); drawLower(t); updReadouts(t);
