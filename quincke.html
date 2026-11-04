@@ -19,8 +19,6 @@
   .controls .ro b{color:var(--yellow)}
   .meter{display:inline-block;width:190px;max-width:48vw;height:1rem;border:1px solid var(--line);border-radius:5px;background:var(--bg);overflow:hidden;vertical-align:middle}
   .meter > div{height:100%;width:0;background:var(--green)}
-  .slowNote{padding:.2rem .6rem;font-size:.8rem;color:var(--muted);background:var(--canvas)}
-  .soundNote{color:var(--muted);font-size:.82rem}
   button.stopSnd{border-color:var(--red);color:var(--red);font-weight:800}
   html[data-mode=proj] .controls .note.reason{opacity:1;font-size:.95rem}
   html[data-mode=proj] .stage.qk .panel.pipe{min-height:640px}
@@ -123,11 +121,10 @@ function sndUpdate() {
 /* ===================== タブ本体 ===================== */
 function buildQuincke(ctx) {
   ctx.stage.classList.add('qk');
-  const cvP = ctx.canvas({ title: 'クインケ管（上から見た図）— 下の U 字管をドラッグで引き出す', className: 'pipe' });
+  const cvP = ctx.canvas({ title: 'クインケ管（上から見た図）', className: 'pipe' });
   const cvR = ctx.canvas({ title: 'B に届く波の y-t（青破線＝経路1から・赤破線＝経路2から・緑＝合成）', className: 'rec' });
-  const cvA = ctx.canvas({ title: 'B での振幅 − d（動かしたところが記録される）', className: 'amp' });
+  const cvA = ctx.canvas({ title: 'B での振幅 − d', className: 'amp' });
   cvP.setPad({ l: 6, r: 6, t: 6, b: 6 });
-  const slowEl = document.createElement('div'); slowEl.className = 'slowNote'; cvP.box.insertBefore(slowEl, cvP.el);
   cvR.setPad({ l: 44, r: 14, t: 14, b: 30 });
   cvA.setPad({ l: 44, r: 14, t: 16, b: 32 });
 
@@ -137,7 +134,7 @@ function buildQuincke(ctx) {
   const fS = ui.slider(cl, { label: '振動数 f', min: 300, max: 3000, step: 10, value: st.f, fmt: x => fmt(x, 0) + ' Hz', onInput: x => { st.f = x; clearRec(); } });
   const dS = ui.slider(cl, { label: '引き出す長さ d', min: 0, max: G.dMax, step: 0.1, value: 0, fmt: x => fmt(x, 1) + ' cm', onInput: x => { stopAuto(); setD(x); } });
   const autoBtn = ui.button(dS.box, { label: '自動で引き出す', className: 'btnMini', onClick: () => (auto.on ? stopAuto() : startAuto()) });
-  autoBtn.title = 'd を 0 から最大までゆっくり動かす（グラフに記録される）';
+  autoBtn.title = 'd を 0 から最大までゆっくり動かす';
   ui.button(dS.box, { label: 'グラフを消す', className: 'btnMini', onClick: () => clearRec() });
   ui.sep(cl);
   tog.p1 = ui.toggle(cl, { label: '経路1の音', checked: true });
@@ -153,21 +150,19 @@ function buildQuincke(ctx) {
   /* 音 */
   ui.sep(cl);
   const sG = ui.group(cl);
-  const sT = ui.toggle(sG, { label: '音を鳴らす（計算した B の振幅で）', checked: false, onChange: on => { if (on) { if (!sndStart()) sT.set(false, true); } else sndStop(); } });
+  const sT = ui.toggle(sG, { label: '音を鳴らす', checked: false, onChange: on => { if (on) { if (!sndStart()) sT.set(false, true); } else sndStop(); } });
   const volS = ui.slider(cl, { label: '音量', min: 0, max: 100, step: 1, value: 20, fmt: x => fmt(x, 0) + ' %', onInput: x => { snd.vol = x / 100; snd.lastG = -1; } });
   ui.button(volS.box, { label: '■ 音を止める', className: 'btnMini stopSnd', onClick: () => { sT.set(false); } });
-  const sn = document.createElement('div'); sn.className = 'note soundNote'; sn.innerHTML = mathHTML('※ 振動数 f の正弦波を、上で計算した B の合成振幅に比例した大きさで鳴らします。実際の管を通った音を録音・再現したものではありません。'); cl.appendChild(sn);
 
   ui.sep(cl);
-  ui.note(cl, '<b>なぜ？</b> B に届く2つの波は、A から B までに通った道の長さが違うので、同じ時刻に届く波の「遅れ」が違う。その差は経路差 ΔL = L₂ − L₁ で決まる。ΔL が λ の何倍かで、B で山と山が重なるか、山と谷が重なるかが決まる（右上の y-t で確かめる）。U 字管を d 引き出すと、行きの脚と帰りの脚が両方 d ずつ伸びるので、経路差は ΔL = 2d になる。').classList.add('reason');
-  ui.note(cl, '管の濃淡は空気の疎密（濃い緑＝密・濃い青＝疎。投影モードでは青＝密・赤＝疎）。管を横切る短い線（目盛り）は密の位置。隣り合う目盛りの間隔が 1 波長 λ。経路1・経路2 に何本ずつ入っているか数えてみよう。');
+  ui.note(cl, '隣り合う密の位置（管を横切る線）の間隔が 1 波長 λ。');
 
   /* 詳しく */
   const dt = ctx.detail;
   ui.slider(dt, { label: '音速 v', min: 330, max: 350, step: 1, value: st.v, fmt: x => fmt(x, 0) + ' m/s', onInput: x => { st.v = x; clearRec(); } });
   ui.select(dt, { label: 'スローモーション', value: '2', options: [['1', '1 周期を 1 秒で'], ['2', '1 周期を 2 秒で'], ['4', '1 周期を 4 秒で']], onChange: v => { st.Tanim = parseFloat(v); } });
-  ui.note(dt, '式で書くと: B で経路1から届く波 y₁ = a sin 2π(t/T − L₁/λ)、経路2から届く波 y₂ = a sin 2π(t/T − L₂/λ)。重ね合わせ y = y₁ + y₂ = 2a cos(πΔL/λ) · sin 2π(t/T − (L₁ + L₂)/(2λ))。だから B での合成振幅は 2a|cos(πΔL/λ)|（ΔL は経路差）。ここでは入口 A までの位相は両経路で共通なので省いています。').classList.add('reason');
-  ui.note(dt, 'y-t グラフの y は B での空気の変位（管に沿った向き）、管の濃淡は疎密です。どちらで見ても、2つの波の重なり方（合成の振幅の割合）は同じです。分かれた後の2つの波の振幅は等しい（a）とし、管の壁での減衰は考えていません。');
+  ui.note(dt, '式で書くと: B で経路1から届く波 y₁ = a sin 2π(t/T − L₁/λ)、経路2から届く波 y₂ = a sin 2π(t/T − L₂/λ)。重ね合わせ y = y₁ + y₂ = 2a cos(πΔL/λ) · sin 2π(t/T − (L₁ + L₂)/(2λ))。だから B での合成振幅は 2a|cos(πΔL/λ)|。').classList.add('reason');
+  ui.note(dt, 'y-t の y は B での空気の変位（管に沿った向き）。');
 
   dbg._setD = x => setD(x);
   dbg._setF = x => fS.set(x);
@@ -282,7 +277,7 @@ function buildQuincke(ctx) {
       `<span>L₁ = <b>${fmt(L1(), 1)}</b> cm</span><span>L₂ = <b>${fmt(L2(), 1)}</b> cm</span>` +
       `<span>経路差 ΔL = L₂ − L₁ = 2d = <b>${fmt(dL(), 1)}</b> cm</span>` +
       `<span>λ = v/f = <b>${fmt(l, 1)}</b> cm</span>` +
-      `<span>ΔL/λ = <b>${fmt(q, 2)}</b>（経路差 = ${fmt(q, 2)} λ）</span>`);
+      `<span>ΔL/λ = <b>${fmt(q, 2)}</b></span>`);
     bar.style.width = (a * 100).toFixed(1) + '%';
     meterV.innerHTML = mathHTML(fmt(a, 2) + ' × 2a');
   }
@@ -349,7 +344,6 @@ function buildQuincke(ctx) {
         [[1, '密'], [-1, '疎']].forEach(([v, lb], i) => { const c = C.shade(v); g.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`; g.fillRect(X, Y + i * S(22), S(18), S(14)); g.strokeStyle = C.line; g.strokeRect(X, Y + i * S(22), S(18), S(14)); cvP.textPx(lb, X + S(24), Y + i * S(22) + S(7), { align: 'left', size: 12, color: C.text, bg: false }); });
         { const c = C.shade(1); g.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`; g.fillRect(X, Y + S(44), S(18), S(14)); cvP.linePx(X + S(9), Y + S(44), X + S(9), Y + S(58), { color: PROJ ? '#000' : '#fff', width: 2.2 }); cvP.textPx('＝ 密の位置', X + S(24), Y + S(51), { align: 'left', size: 12, color: C.text, bg: false }); }
       }
-      { const tx2 = 'スローモーション表示：実際は 1 秒間に ' + fmt(st.f, 0) + ' 回振動（ここでは 1 回に ' + st.Tanim + ' 秒）'; if (slowEl.textContent !== tx2) slowEl.textContent = tx2; }
 
       /* ===== B での y-t（記録計） ===== */
       const Tms = 1000 / st.f, tau = phi0 * Tms, span = 3 * Tms;
@@ -402,7 +396,7 @@ function syncSoundToggle() { document.querySelectorAll('.controls label').forEac
 Nami.init({
   title: 'クインケ管の干渉',
   appName: 'おとラボ', appHref: './index.html',
-  footerBase: 'U 字管（取っ手・底の管）を上下にドラッグして d を変える。画面クリックで停止・再開。管の濃淡＝疎密、管を横切る短い線＝密の位置。',
+  footerBase: '画面クリックで停止・再開。',
   tabs: [{ id: 'quincke', label: 'クインケ管の干渉', period: () => st.Tanim, build: ctx => { const api = buildQuincke(ctx); return api; } }]
 });
 })();

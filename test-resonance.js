@@ -237,6 +237,23 @@ const TABS = ['string', 'drive', 'pipe', 'tube'];
     check('振動子 滑車をドラッグ → L が変わりスライダーも連動', near(Ld, 0.5, 0.02) && near(+sv, Ld, 1e-9), `L=${Ld} slider=${sv}`);
     check('振動子 ドラッグ後 f₁ = v/(2L)', near(await page.evaluate(() => __oto_debug.drive.f1()), 120 / (2 * Ld), 1e-6));
     check('振動子 滑車のドラッグでは停止しない', await page.evaluate(() => document.querySelector('.view.show .status').hidden));
+    // v を変えるとおもり（張力 S ∝ v²）の描画サイズが変わる：立方体の体積 ∝ v²
+    const wAt = async v => { await page.evaluate(x => __oto_debug.drive.setV(x), v); await frames(); return page.evaluate(() => __oto_debug.drive.weightPx().side); };
+    const w60 = await wAt(60), w120 = await wAt(120), w240 = await wAt(240), w50 = await wAt(50), w300 = await wAt(300);
+    check('振動子 v を 2 倍 → おもりの体積（辺³）が 4 倍（S ∝ v²）', near(Math.pow(w120 / w60, 3), 4, 1e-6) && near(Math.pow(w240 / w120, 3), 4, 1e-6), [w60, w120, w240].map(x => x.toFixed(2)).join(','));
+    check('振動子 おもりの辺が v の最小〜最大で極端にならない', w50 > 7 && w300 < 60, `${w50.toFixed(1)}〜${w300.toFixed(1)} px`);
+    await page.screenshot({ path: path.join(OUT, 'resonance-drive-v300.png') });
+    // おもりをドラッグしても L が変わる
+    {
+      await page.evaluate(() => { __oto_debug.drive.setV(120); __oto_debug.drive.setL(0.60); }); await frames();
+      const cb2 = await page.locator('.view.show canvas').first().boundingBox();
+      const Wp = await page.evaluate(() => __oto_debug.drive.weightPx()), O = await page.evaluate(() => __oto_debug.drive.originPx());
+      const P6 = await page.evaluate(() => __oto_debug.drive.pulleyPx());
+      const X90 = O + (P6.X - O) * 0.9 / 0.6;
+      await dragPx(cb2, Wp.X, Wp.Y, X90 + (Wp.X - P6.X), Wp.Y);
+      const Lw = await page.evaluate(() => __oto_debug.drive.getL());
+      check('振動子 おもりをドラッグ → L が変わる', near(Lw, 0.9, 0.02), `L=${Lw}`);
+    }
   }
   await page.evaluate(() => { const d = __oto_debug.drive; d.setL(0.30); d.setF(0); for (let f = 0; f <= 700; f += 2) d.setF(f); d.setF(400); });
   await page.waitForTimeout(300);
@@ -316,8 +333,8 @@ const TABS = ['string', 'drive', 'pipe', 'tube'];
   check('共鳴実験 v = fλ が 340 m/s に近い', near(r.V.v, 340, 2), r.V.v.toFixed(1));
   ft = await page.evaluate(() => [...document.querySelectorAll('.view.show .controls .formula')].map(e => e.textContent).join(' / '));
   check('共鳴実験 読み出しに l₁・l₂・l₂−l₁・λ・Δx・v（数値代入）', ft.includes('l₁ = ' + r.V.l1.toFixed(2)) && ft.includes('l₂ − l₁ = ') && ft.includes('λ = 2(l₂ − l₁) = 2 × ') && ft.includes('Δx = λ/4 − l₁') && ft.includes('(l₂ − 3l₁)/2') && ft.includes('v = fλ = 512 Hz ×'), ft);
-  const reasonTxt = await page.evaluate(() => [...document.querySelectorAll('.view.show .controls .note.reason')].map(e => e.textContent).join(' '));
-  check('共鳴実験 式の理由を同じ場所に記載', reasonTxt.includes('となりの節と節の間隔は λ/2') && reasonTxt.includes('腹から、1つ目の節（水面）までが λ/4'), reasonTxt.slice(0, 80));
+  const bodyTxt = await page.evaluate(() => document.body.innerText);
+  check('共鳴実験 弁明・理由の文を画面に出していない', !/判定していない|自分で確かめる|拡大|計算結果の音|の理由：/.test(bodyTxt), (bodyTxt.match(/判定していない|自分で確かめる|拡大|計算結果の音|の理由：/) || [''])[0]);
   // 共鳴していない位置でも判定せずそのまま計算
   r = await page.evaluate(() => { const d = __oto_debug.tube; d.setL('A', 10); d.setL('B', 30); return d.values(); });
   check('共鳴実験 共鳴していない位置でもそのままの数値で計算（判定しない）', near(r.lam, 40, 1e-9) && near(r.dx, 0, 1e-9), JSON.stringify(r));

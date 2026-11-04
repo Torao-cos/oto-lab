@@ -13,7 +13,6 @@
   .controls .ctlLabel.hdr{font-weight:900;color:var(--text)}
   /* 「なぜそうなるか」の理由ノート */
   .controls .note.reason{color:var(--text);opacity:.92;line-height:1.55;font-size:.88rem}
-  .controls .note.slow{color:var(--yellow);font-weight:700}
   .controls .sndBox{display:flex;gap:.4rem .8rem;align-items:center;flex-wrap:wrap}
   .controls button.stopSnd{border-color:var(--red);color:var(--red);font-weight:800}
   html[data-mode=proj] .controls .note.reason{opacity:1;font-size:.95rem}
@@ -50,8 +49,6 @@ const dbg = (window.__oto_debug = window.__oto_debug || {});
 /* 時間表示：スローモーションなので秒ではなく「何周期ぶん進んだか」を出す */
 const TL = t => '経過 ' + fmt(t / TD, 2) + ' 周期';
 const modeName = n => (n === 1 ? '基本振動' : n + '倍振動');
-const slowShort = f => 'スロー：実際は 1 秒間に ' + (f >= 100 ? fmt(f, 0) : fmt(f, 1)) + ' 回';
-const slowText = f => 'スローモーション表示：実際は 1 秒間に ' + (f >= 100 ? fmt(f, 0) : fmt(f, 1)) + ' 回振動';
 
 /* ===================== 共通の描画ヘルパ ===================== */
 function fitSize(cv, str, maxW, size, min = 9) {
@@ -184,13 +181,12 @@ function soundControls(parent, label, getF, getLevel) {
   return {
     update() {
       const f = getF(), out = v.on && !audible(f);
-      if (out) warn.innerHTML = '<i>f</i> = ' + fmt(f, 1) + ' Hz は人の耳に聞こえる範囲（およそ 20〜20000 Hz）の外なので、音は出していません。';
+      if (out) warn.innerHTML = '<i>f</i> = ' + fmt(f, 1) + ' Hz は人の耳に聞こえない（聞こえるのは約 20〜20000 Hz）。';
       warn.hidden = !out;
       if (v.on) v.set(f, level());
     }, voice: v, toggle: tg, stopBtn: stop, warn
   };
 }
-const reason = (parent, text) => { const n = ui.note(parent, text); n.classList.add('reason'); return n; };
 /* n 倍振動の選択（select＋▼▲） */
 function nPicker(parent, label, getList, onSet) {
   const L0 = getList();
@@ -238,19 +234,15 @@ function buildString(ctx) {
   const np = nPicker(ctx.controls, '振動のようす', () => [1, 2, 3, 4, 5, 6], n => { st.n = n; });
   const sL = ui.slider(ctx.controls, { label: '弦の長さ L', min: L_MIN, max: L_MAX, step: 0.01, value: 0.60, unit: 'm', digits: 2 });
   const sV = ui.slider(ctx.controls, { label: '弦を伝わる波の速さ v', min: 50, max: 300, step: 1, value: 120, unit: 'm/s', digits: 0 });
-  ui.note(ctx.controls, '右端の固定具を左右にドラッグしても L を変えられる。');
   const fo = ui.formula(ctx.controls, '');
-  reason(ctx.controls, '両端は固定されていて動けない＝節。となりの節と節の間隔は λ/2 なので、長さ L の中に λ/2 がちょうど n 個並ぶ：L = n × λ/2。波の速さ v が同じなら、λ が短いほど f = v/λ は大きい。');
   ui.sep(ctx.controls);
   const tTr = ui.toggle(ctx.controls, { label: '左右に進む波を表示', checked: false });
   ui.legend(ctx.controls, [[C.wave1, '右へ進む波'], [C.wave2, '左へ進む波（反射波）'], [C.wave, '重ね合わせ（定在波）']]);
-  reason(ctx.controls, '両端で反射をくり返す波が重なる。両端が節になる波長の波だけが、何度反射しても形が崩れずに残る。');
   const tEnv = ui.toggle(ctx.controls, { label: '包絡線', checked: true });
   const tMk = ui.toggle(ctx.controls, { label: '節・腹', checked: true });
-  const slow = ui.note(ctx.controls, ''); slow.classList.add('slow');
-  const snd = soundControls(ctx.controls, '音を鳴らす（実際の振動数 f で）', () => sV.get() * st.n / (2 * sL.get()), () => 1);
+  const snd = soundControls(ctx.controls, '音を鳴らす', () => sV.get() * st.n / (2 * sL.get()), () => 1);
   ui.formula(ctx.detail, 'y₁ = A sin2π(t/T − x/λ)（右へ）　y₂ = −A sin2π(t/T + x/λ)（左へ：固定端で反射した波）　y₁ + y₂ = <b>−2A cos(2πt/T) · sin(2πx/λ)</b>');
-  ui.note(ctx.detail, 'x = 0 では sin 0 = 0 なのでいつも変位 0。もう一方の端 x = L でも変位 0 になるには sin(2πL/λ) = 0、つまり L が λ/2 の整数倍でなければならない。画面の緑の線は、この式を直接描かず y₁ と y₂ を足して描いている。振幅は見やすい大きさにしている。');
+  ui.note(ctx.detail, 'x = 0 では sin 0 = 0 なのでいつも変位 0。もう一方の端 x = L でも変位 0 になるには sin(2πL/λ) = 0、つまり L が λ/2 の整数倍でなければならない。');
 
   const calc = () => { const n = st.n, L = sL.get(), v = sV.get(), lam = 2 * L / n; return { n, L, v, lam, f: v / lam }; };
   dbg.string = {
@@ -291,10 +283,8 @@ function buildString(ctx) {
       }
       if (n >= 2) bracket(cv, 0, lam, 1.3, 'λ = ' + fmt(lam, 2) + ' m');
       else bracket(cv, 0, L, 1.3, 'λ/2 = L　（λ = 2L = ' + fmt(lam, 2) + ' m）');
-      topText(cv, slowText(f), { short: slowShort(f) });
       fo.set('λ = 2L/n = 2 × ' + fmt(L, 2) + ' m / ' + n + ' = <b>' + fmt(lam, 3) + ' m</b><br>'
         + 'f = v/λ = nv/(2L) = ' + n + ' × ' + fmt(v, 0) + ' m/s / (2 × ' + fmt(L, 2) + ' m) = <b>' + fmt(f, 1) + ' Hz</b>');
-      slow.textContent = slowText(f) + '（画面では約 ' + TD + ' 秒に 1 回）';
       snd.update();
     }
   };
@@ -329,15 +319,20 @@ function buildDrive(ctx) {
   const sweepBtn = ui.buttons(ctx.controls, null, [{ label: '自動で掃引', onClick: () => toggleSweep() }])[0];
   ui.buttons(ctx.controls, null, [{ label: 'グラフを消す', onClick: () => { rec.clear(); rec.visit(st.f, st.f); } }]);
   const fo = ui.formula(ctx.controls, '');
-  reason(ctx.controls, '振動子から出た波と、端で反射して戻ってきた波が重なる。往復してきた波の山が、次に出る山とちょうど重なる振動数では、揺れが積み重なって大きくなる。');
-  ui.note(ctx.controls, '上下の揺れは拡大して描いている（振動子の揺れも弦の揺れも同じ倍率）。グラフは f を動かして通った所だけが記録される。L や v を変えると別の弦になるのでグラフは消える。滑車を左右にドラッグしても L を変えられる。');
   const tEnv = ui.toggle(ctx.controls, { label: '包絡線（各点の振幅）', checked: true });
-  const slow = ui.note(ctx.controls, ''); slow.classList.add('slow');
-  const snd = soundControls(ctx.controls, '音を鳴らす（振動子の振動数 f・弦の振幅に比例した音量＝計算結果の音）', () => st.f, () => driveAmp(st.f, L(), V()) / QD);
+  const snd = soundControls(ctx.controls, '音を鳴らす', () => st.f, () => driveAmp(st.f, L(), V()) / QD);
   ui.formula(ctx.detail, 'y(x, t) = Re[ a₀ · sin(k̃(L − x)) / sin(k̃L) · e^(iωt) ]、k̃ = ω/v − iβ');
-  ui.note(ctx.detail, '左端 x = 0 は振動子といっしょに振幅 a₀ で動き、右端 x = L（滑車）は動かない、という2つの条件を満たす定常的な振動。β は弦を伝わる波が少しずつ弱まる度合い（空気の抵抗や端での損失）。β = 0 だと分母が 0 になる振動数で振幅が無限大になるが、実際には損失があるので有限の大きさで止まる。ここでは β = 1/(20L) としている。');
+  ui.note(ctx.detail, '左端 x = 0 は振動子と同じく振幅 a₀ で動き、右端 x = L（滑車）は動かない。β は波が弦を伝わるうちに弱まる度合い（β = 1/(20L)）。');
 
   const L = () => sL.get(), V = () => sV.get();
+  /* おもり：v = √(S/ρ)（ρ 一定）→ 張力 S ∝ v²。立方体の体積（＝重さ）を S に比例させる → 1 辺 ∝ v^(2/3) */
+  const W_MAX = 34;
+  /* ひもの長さ [px]（滑車の中心から おもり正面の上端まで）＝おもりの上面が滑車に重ならない最短の長さ */
+  const wRopePx = a => S(13) + 0.28 * a + S(3);
+  /* 最大の辺：図の下端（目盛り）と右端にはみ出さない大きさまで（画面ごとに固定・v には依存しない） */
+  const wMaxPx = () => Math.max(S(12), Math.min(S(W_MAX), (cv.pad.t + cv.ih - cv.py(0) - S(26) - S(27)) / 1.28, (cv.w - cv.px(L_MAX) - S(13) - 4) / 0.78));
+  const wSide = () => wMaxPx() * Math.cbrt(Math.pow(V() / 300, 2));
+  const wCenterY = () => { const a = wSide(); return cv.py(0) + S(13) + wRopePx(a) + a / 2; };
   const rec = Recorder(3000, f => driveAmp(f, L(), V()));
   function fMaxOf() { const raw = 6.6 * V() / (2 * L()); const p = Math.pow(10, Math.floor(Math.log10(raw))) / 2; return Math.ceil(raw / p) * p; }
   function newString() {
@@ -357,12 +352,12 @@ function buildDrive(ctx) {
   dbg.drive = {
     amp: f => driveAmp(f, L(), V()), shape: f => driveShape(f, L(), V()), getF: () => st.f, setF, fMax: () => rec.xMax,
     recCount: () => rec.count(), rec, toggleSweep, sweeping: () => st.sweep, Q: QD, f1: () => V() / (2 * L()),
-    getL: () => sL.get(), setL: x => sL.set(x), pulleyPx: () => ({ X: cv.px(sL.get()), Y: cv.py(0) + S(13) }), originPx: () => cv.px(0), sound: snd
+    getL: () => sL.get(), setL: x => sL.set(x), setV: x => sV.set(x), getV: () => sV.get(), pulleyPx: () => ({ X: cv.px(sL.get()), Y: cv.py(0) + S(13) }), weightPx: () => ({ X: cv.px(sL.get()) + S(13), Y: wCenterY(), side: st.wDrawn }), originPx: () => cv.px(0), sound: snd
   };
   /* 滑車（とおもり）をドラッグして L を変える（スライダーと連動。別の弦になるのでグラフは消える） */
   const setLdrag = x => { const v = roundL(x); if (Math.abs(v - sL.get()) > 1e-9) sL.set(v); };
   cv.addHandle({ get: () => ({ x: sL.get(), y: cv.wy(cv.py(0) + S(13)) }), set: setLdrag, r: S(26) });
-  cv.addHandle({ get: () => ({ x: sL.get() + S(13) / cv.sx, y: cv.wy(cv.py(0) + S(13) + S(44)) }), set: x => setLdrag(x - S(13) / cv.sx), r: S(22) });
+  cv.addHandle({ get: () => ({ x: sL.get() + S(13) / cv.sx, y: cv.wy(wCenterY()) }), set: x => setLdrag(x - S(13) / cv.sx), r: Math.max(S(22), wSide() / 2 + S(8)) });
 
   return {
     onShow() { Snd.stopAll(); }, timeLabel: TL,
@@ -401,11 +396,19 @@ function buildDrive(ctx) {
       g.save(); g.strokeStyle = C.text; g.lineWidth = 2 * SC; g.beginPath(); g.arc(XL, Y0 + R, R, 0, TAU); g.stroke();
       g.beginPath(); g.arc(XL, Y0 + R, 2.5 * SC, 0, TAU); g.fillStyle = C.text; g.fill(); g.restore();
       cv.linePx(XL, Y0, XL + R * 0.3, Y0, { color: C.wave, width: 2.5 });
-      cv.linePx(XL + R, Y0 + R, XL + R, Y0 + R + S(34), { color: C.wave, width: 2 });
-      g.save(); g.fillStyle = C.muted; g.fillRect(XL + R - S(9), Y0 + R + S(34), S(18), S(20)); g.restore();
+      const wa = wSide(), wo = wa * 0.28, wx = XL + R - wa / 2, wy = Y0 + R + wRopePx(wa); st.wDrawn = wa;
+      cv.linePx(XL + R, Y0 + R, XL + R, wy - wo / 2, { color: C.wave, width: 2 });
+      g.save(); g.strokeStyle = C.text; g.lineWidth = 1.2 * SC; g.lineJoin = 'round';
+      g.fillStyle = PROJ ? '#9aa39e' : '#6f8077';   // 上面
+      g.beginPath(); g.moveTo(wx, wy); g.lineTo(wx + wo, wy - wo); g.lineTo(wx + wa + wo, wy - wo); g.lineTo(wx + wa, wy); g.closePath(); g.fill(); g.stroke();
+      g.fillStyle = PROJ ? '#6d7671' : '#3f4d46';   // 側面
+      g.beginPath(); g.moveTo(wx + wa, wy); g.lineTo(wx + wa + wo, wy - wo); g.lineTo(wx + wa + wo, wy + wa - wo); g.lineTo(wx + wa, wy + wa); g.closePath(); g.fill(); g.stroke();
+      g.fillStyle = C.muted; g.fillRect(wx, wy, wa, wa); g.strokeRect(wx, wy, wa, wa);   // 正面
+      g.restore();
+      cv.textPx('おもり（張力 S）', wx - S(6), wy + wa / 2, { align: 'right', color: C.muted, size: 11, bold: true });
       cv.textPx('滑車', XL - S(6), Y0 - S(12), { align: 'right', color: C.muted, size: 11, bold: true });
-      dragHint(cv, XL + R, Y0 + R + S(34) + S(20) + S(12));
-      topText(cv, '上下の揺れは拡大表示　腹の振幅 = 振動子の振幅の ' + fmt(amp, 1) + ' 倍', { color: C.text, maxW: cv.iw * 0.98, short: '拡大表示　腹の振幅 = 振動子の ' + fmt(amp, 1) + ' 倍' });
+      dragHint(cv, XL + R, wy + wa + S(12));
+      topText(cv, '腹の振幅 = 振動子の振幅の ' + fmt(amp, 1) + ' 倍', { color: C.text, maxW: cv.iw * 0.98, short: '腹の振幅 = 振動子の ' + fmt(amp, 1) + ' 倍' });
       /* --- 振幅 − f グラフ --- */
       gv.clear(); gv.setPad({ l: 46, b: 32 });
       gv.setView({ x0: 0, x1: rec.xMax, y0: 0, y1: QD * 1.15 });
@@ -416,8 +419,8 @@ function buildDrive(ctx) {
       });
       gv.dot(f, amp, 5, { color: C.yellow, stroke: PROJ ? '#fff' : '#000' });
       fo.set('f = <b>' + fmt(f, 1) + ' Hz</b>　　波長 λ = v/f = ' + (f > 0.05 ? fmt(v, 0) + ' m/s / ' + fmt(f, 1) + ' Hz = <b>' + fmt(v / f, 3) + ' m</b>' : '—')
-        + '<br>腹の振幅 = 振動子の振幅の <b>' + fmt(amp, 2) + ' 倍</b>');
-      slow.textContent = slowText(f) + '（画面では約 ' + TD + ' 秒に 1 回）';
+        + '<br>腹の振幅 = 振動子の振幅の <b>' + fmt(amp, 2) + ' 倍</b>'
+        );
       snd.update();
     }
   };
@@ -436,18 +439,14 @@ function buildPipe(ctx) {
   const sL = ui.slider(ctx.controls, { label: '管の長さ L', min: 0.20, max: 1.00, step: 0.01, value: 0.50, unit: 'm', digits: 2 });
   const sV = ui.slider(ctx.controls, { label: '音速 v', min: 330, max: 350, step: 1, value: 340, unit: 'm/s', digits: 0 });
   const fo = ui.formula(ctx.controls, '');
-  reason(ctx.controls, '閉じた端では、空気は壁より先へ動けない → 変位の節。開いた端では空気が自由に出入りできる → 変位の腹。となりの節と腹の間隔は λ/4。');
   ui.sep(ctx.controls);
   const tG = ui.toggle(ctx.controls, { label: '変位を横向きに表したグラフ', checked: true });
-  ui.note(ctx.controls, '空気の粒は管の軸の向き（左右）にふるえる。グラフは右向きの変位を上向きに、左向きの変位を下向きに 90° 回して描いたもの（なみラボ「8 縦波の横波表示」と同じ約束。x軸の正の向きは右）。粒の変位は誇張して描いている。');
+  ui.note(ctx.controls, 'グラフは右向きの変位を上向きに描いたもの。');
   const tD = ui.toggle(ctx.controls, { label: '疎密', checked: false });
-  reason(ctx.controls, '変位の節では両側の空気が寄ってきたり離れたりするので、疎密の変化がいちばん大きい。');
   const tE = ui.toggle(ctx.controls, { label: '開口端補正', checked: false, onChange: on => { sR.box.hidden = !on; } });
   const sR = ui.slider(ctx.controls, { label: '管の半径 r', min: 1.0, max: 5.0, step: 0.1, value: 3.0, unit: 'cm', digits: 1 }); sR.box.hidden = true;
-  const corrNote = reason(ctx.controls, '実際の腹は管口より少し外側にできる（管口の外の空気もいっしょにふるえるため）。そのずれが開口端補正 Δx（およそ 0.6r）。');
   const tMk = ui.toggle(ctx.controls, { label: '節・腹', checked: true });
-  const slow = ui.note(ctx.controls, ''); slow.classList.add('slow');
-  const snd = soundControls(ctx.controls, '音を鳴らす（実際の振動数 f で）', () => geom().f, () => 1);
+  const snd = soundControls(ctx.controls, '音を鳴らす', () => geom().f, () => 1);
   ui.formula(ctx.detail, '疎密（密度の変化）∝ −∂ξ/∂x　（ξ＝変位。右向きを正）');
   ui.note(ctx.detail, '変位 ξ が右へ行くほど小さくなっている所（∂ξ/∂x が負）では、左の粒が右の粒より右へずれている＝間がつまって密。変位の節の両側では粒が逆向きにずれるので、∂ξ/∂x の大きさが最大＝疎密の変化が最大。腹では両側の粒が同じだけずれるので、疎密は変化しない。');
 
@@ -538,7 +537,6 @@ function buildPipe(ctx) {
         bracket(cv, L, L + dx, -1.72, 'Δx', { color: C.anti, place: 'right', below: true });
         if (!closed) bracket(cv, -dx, 0, -1.72, 'Δx', { color: C.anti, place: 'left', below: true });
       }
-      topText(cv, slowText(G.f), { short: slowShort(G.f) });
       /* 読み出し */
       const Ls = fmt(L, 3), dxs = fmt(dx, 3);
       let s1;
@@ -550,8 +548,6 @@ function buildPipe(ctx) {
         : 'L = nλ/2 より　λ = 2L/n = 2 × ' + fmt(L, 2) + ' m / ' + G.n + ' = <b>' + fmt(lam, 3) + ' m</b>';
       fo.set(s1 + '<br>f = v/λ = ' + fmt(G.v, 0) + ' m/s / ' + fmt(lam, 3) + ' m = <b>' + fmt(G.f, 1) + ' Hz</b>'
         + (dx > 0 ? '<br>Δx = 0.6r = 0.6 × ' + fmt(sR.get(), 1) + ' cm = ' + fmt(dx * 100, 2) + ' cm' : ''));
-      corrNote.hidden = !tE.get();
-      slow.textContent = slowText(G.f) + '（画面では約 ' + TD + ' 秒に 1 回）';
       snd.update();
     }
   };
@@ -566,7 +562,7 @@ const TUBE_LEN = 100;  // 水面を下げられる深さ [cm]
 const MARK_TOL = 0.5;  // 節・腹の表示範囲：管口から Δx 上（＋水面の刻み分の余裕）[cm]
 function buildTube(ctx) {
   ctx.layout('2'); ctx.stage.classList.add('tube');
-  const cv = ctx.canvas({ title: '気柱の共鳴実験（管&#65;・管&#66; の水面をそれぞれ上下にドラッグ）', className: 'tubeP' });
+  const cv = ctx.canvas({ title: '気柱の共鳴実験', className: 'tubeP' });
   const gv = ctx.canvas({ title: '気柱の振動の大きさ − 気柱の長さ l', className: 'small' });
   cv.setPad({ l: 6, r: 6, t: 6, b: 6 });
   const TW = 6, XA = -21, XB = 21, XH = 52, RXA = -42, RXB = 42;   // 管の半幅・中心・目盛りの位置（横は図の上の単位）
@@ -577,7 +573,7 @@ function buildTube(ctx) {
   ];
   const T = k => tubes[k === 'B' || k === 1 ? 1 : 0];
 
-  ui.note(ctx.controls, '同じ振動数のおんさで鳴らす 2 本の管。管&#65; を 1 回目の共鳴、管&#66; を 2 回目の共鳴の位置にして並べると、波長と開口端補正が求められる。');
+  ui.note(ctx.controls, '管&#65; を 1 回目、管&#66; を 2 回目の共鳴の位置にすると、λ と Δx が求められる。');
   const fSel = ui.select(ctx.controls, { label: 'おんさの振動数 f（2本共通）', value: '512', options: [['256', '256 Hz'], ['384', '384 Hz'], ['440', '440 Hz'], ['512', '512 Hz']], onChange: () => newExp() });
   const sV = ui.slider(ctx.controls, { label: '音速 v', min: 330, max: 350, step: 1, value: 340, unit: 'm/s', digits: 0, onInput: () => newExp() });
   const tC = ui.toggle(ctx.controls, { label: '開口端補正を考える（2本とも r = 1.5 cm）', checked: true, onChange: () => newExp() });
@@ -594,14 +590,10 @@ function buildTube(ctx) {
   const foM = ui.formula(ctx.controls, '');
   const calcHdr = ui.note(ctx.controls, '測った値から求める'); calcHdr.classList.add('reason'); calcHdr.style.fontWeight = '900';
   const foC = ui.formula(ctx.controls, '');
-  reason(ctx.controls, 'λ = 2(l₂ − l₁) の理由：1回目と2回目の共鳴の水面はどちらも変位の節で、となりの節と節の間隔は λ/2。だから l₂ − l₁ = λ/2（管口の外の補正 Δx は差を取ると消える）。<br>'
-    + 'Δx = λ/4 − l₁ の理由：管口の少し外側（Δx 上）にできる腹から、1つ目の節（水面）までが λ/4。だから l₁ + Δx = λ/4。<br>'
-    + 'ここでは置いた水面（印があれば印）の値をそのまま式に入れているだけで、その位置で共鳴しているかどうかは判定していない。共鳴の位置かどうかは、図の振動の大きさ・グラフ・音で自分で確かめる。');
-  ui.note(ctx.controls, '管の中の粒は上下（管の軸の向き）にふるえる。緑の曲線は上向きの変位を右向きに 90° 回して描いたグラフ。粒の変位は誇張している。管口より上（Δx の範囲）の淡い粒は管口の外の空気。色の点線は各管の水面の高さを 2 本にわたって引いたもの（管&#66; の節が管&#65; の水面と同じ高さに来るか、などを見比べる）。グラフは水面を動かして通った所だけが記録される。振動数・音速・補正を変えるとグラフと印は消える。');
-  const slow = ui.note(ctx.controls, ''); slow.classList.add('slow');
-  const snd = soundControls(ctx.controls, '音を鳴らす（振動数 f・2本の応答の平均に比例した音量＝計算結果の音）', () => +fSel.get(), () => (resp(tubes[0].l) + resp(tubes[1].l)) / 2);
+  ui.note(ctx.controls, '緑の曲線は上向きの変位を右向きに描いたもの。色の点線は各管の水面の高さ。');
+  const snd = soundControls(ctx.controls, '音を鳴らす', () => +fSel.get(), () => (resp(tubes[0].l) + resp(tubes[1].l)) / 2);
   const foD = ui.formula(ctx.detail, '');
-  ui.note(ctx.detail, 'この画面の応答の大きさ ∝ 1/√(cos²(2π(l + Δx)/λ) + ε²)（ε = 0.07：管の中や管口での損失を表す小さな数）。管口から Δx 外側が腹、水面が節になる長さで分母が最小になる。上の λ・Δx は、測った値から求めた値と比べるための計算値。');
+  ui.note(ctx.detail, '振動の大きさ ∝ 1/√(cos²(2π(l + Δx)/λ) + ε²)（ε = 0.07：損失の大きさ）。管口の Δx 上が腹、水面が節になる長さで最大になる。');
 
   const lam = () => sV.get() * 100 / +fSel.get();              // [cm]
   const dX = () => (tC.get() ? 0.6 * R_TUBE : 0);               // [cm]
@@ -719,9 +711,6 @@ function buildTube(ctx) {
       /* 2本の間の水平の補助線：各管の水面の高さを両管にわたって引く */
       for (const tb of tubes) cv.line(XA - TW, -tb.l, XB + TW, -tb.l, { color: tb.col, width: 1.6, dash: [6, 4], alpha: GA(0.85) });
       cv.textPx('おんさ ' + f + ' Hz', cv.px(0), cv.py(14), { color: C.text, size: 12.5, bold: true });
-      cv.textPx('（2本とも同じ）', cv.px(0), cv.py(14) + S(15), { color: C.muted, size: 10.5, bold: true });
-      const sl = 'スロー：実際は 1 秒間に ' + f + ' 回', sx0 = cv.pad.l + S(2);
-      cv.textPx(sl, sx0, cv.py(yTop) + S(3), { align: 'left', baseline: 'top', color: C.yellow, size: fitSize(cv, sl, cv.iw - S(4), 12, 8), bold: true });
       /* --- グラフ（管A・管B で動かした所を色分け。どちらも同じ曲線に乗る） --- */
       gv.clear(); gv.setPad({ l: 40, b: 32 });
       gv.setView({ x0: 0, x1: TUBE_LEN, y0: 0, y1: 1.18 });
@@ -742,7 +731,6 @@ function buildTube(ctx) {
         + 'Δx = λ/4 − l₁ = ' + fmt(V.lam, 2) + ' cm / 4 − ' + fmt(V.l1, 2) + ' cm = <b>' + fmt(V.dx, 2) + ' cm</b>　（＝ (l₂ − 3l₁)/2）<br>'
         + 'v = fλ = ' + f + ' Hz × ' + fmt(V.lam / 100, 4) + ' m = <b>' + fmt(V.v, 1) + ' m/s</b>');
       foD.set('計算値：λ = v/f = ' + fmt(sV.get(), 0) + ' m/s / ' + f + ' Hz = ' + fmt(L, 2) + ' cm　Δx = 0.6r = 0.6 × ' + R_TUBE + ' cm = ' + fmt(dx, 2) + ' cm');
-      slow.textContent = slowText(f) + '（画面では約 ' + TD + ' 秒に 1 回）';
       snd.update();
     }
   };
@@ -752,7 +740,7 @@ function buildTube(ctx) {
 Nami.init({
   title: '弦の振動と気柱の共鳴',
   appName: 'おとラボ', appHref: './index.html',
-  footerBase: '画面をクリック／タップで停止・再開（振動はスローモーション）。振動子の振動数や水面の位置は、動かした所だけがグラフに記録されます。音は「音を鳴らす」で出し、「■ 音を止める」かタブ切替で止まります。',
+  footerBase: '画面をクリック／タップで停止・再開。',
   tabs: [
     { id: 'string', label: '1 弦の固有振動', period: () => TD, build: buildString },
     { id: 'drive', label: '2 振動子で弦を振らせる', period: () => TD, build: buildDrive },
