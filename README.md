@@ -7,7 +7,7 @@
 
 ## 音のシミュレーション
 
-- [2つの正弦波の合成](https://torao-cos.github.io/oto-lab/combine.html) — 2本の正弦波と着目点の縦線をドラッグして重ね合わせ・うなりを見る
+- [正弦波の合成](https://torao-cos.github.io/oto-lab/combine.html) — 最大3本の正弦波（倍音など）の重ね合わせ。縦線・曲線・山の点をドラッグ
 - [クインケ管の干渉](https://torao-cos.github.io/oto-lab/quincke.html) — U字管を引き出して経路差と B での振幅の関係を見る
 - [弦の振動と気柱の共鳴](https://torao-cos.github.io/oto-lab/resonance.html) — 弦の固有振動／振動子で弦を振らせる／気柱の固有振動／気柱の共鳴実験
 
